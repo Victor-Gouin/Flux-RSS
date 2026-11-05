@@ -1,0 +1,12 @@
+services:
+  flux-rss:
+    build: .
+    container_name: flux-rss
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=3000
+      - DATA_DIR=/app/data

@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flux — Lecteur RSS Épuré</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <!-- BARRE LATÉRALE GAUCHE -->
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <div class="brand-logo" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 11a9 9 0 0 1 9 9" />
+              <path d="M4 4a16 16 0 0 1 16 16" />
+              <circle cx="5" cy="19" r="1.5" fill="currentColor" />
+            </svg>
+          </div>
+          <div class="brand-text">
+            <span class="brand-name">Flux</span>
+            <span class="brand-badge">Reader</span>
+          </div>
+        </div>
+
+        <div class="sidebar-header-actions">
+          <button id="btn-theme-toggle" class="icon-btn" title="Basculer le thème Clair / Sombre (t)">
+            <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="4"/>
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+            </svg>
+            <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+            </svg>
+          </button>
+          <button id="btn-shortcuts" class="icon-btn" title="Raccourcis clavier (?)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="4" width="20" height="16" rx="2"/>
+              <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Boutons d'action principaux -->
+      <div class="sidebar-cta-group">
+        <button id="btn-open-add-feed" class="btn-primary-cta">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+          <span>Ajouter un flux</span>
+        </button>
+        <button id="btn-open-opml" class="btn-secondary-cta" title="Importer ou exporter vos flux FreshRSS (OPML)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <span>OPML</span>
+        </button>
+      </div>
+
+      <!-- Navigation intelligente -->
+      <nav class="sidebar-nav">
+        <div class="nav-section-label">Vues</div>
+        <button class="nav-item active" data-filter="all">
+          <span class="nav-item-left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="16" rx="2"/>
+              <line x1="7" y1="8" x2="17" y2="8"/>
+              <line x1="7" y1="12" x2="17" y2="12"/>
+              <line x1="7" y1="16" x2="13" y2="16"/>
+            </svg>
+            <span>Toute l'actualité</span>
+          </span>
+          <span id="badge-all" class="nav-badge">0</span>
+        </button>
+
+        <button class="nav-item" data-filter="unread">
+          <span class="nav-item-left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="8"/>
+              <circle cx="12" cy="12" r="3" fill="currentColor"/>
+            </svg>
+            <span>Non lus</span>
+          </span>
+          <span id="badge-unread" class="nav-badge accent">0</span>
+        </button>
+
+        <button class="nav-item" data-filter="today">
+          <span class="nav-item-left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+              <line x1="16" y1="2" x2="16" y2="6"/>
+              <line x1="8" y1="2" x2="8" y2="6"/>
+              <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            <span>Aujourd'hui</span>
+          </span>
+          <span id="badge-today" class="nav-badge">0</span>
+        </button>
+
+        <button class="nav-item" data-filter="starred">
+          <span class="nav-item-left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+            </svg>
+            <span>Favoris & À lire</span>
+          </span>
+          <span id="badge-starred" class="nav-badge">0</span>
+        </button>
+
+        <!-- Liste des Dossiers / Catégories & Flux -->
+        <div class="nav-section-header">
+          <span class="nav-section-label">Abonnements</span>
+          <button id="btn-add-category" class="nav-mini-btn" title="Nouveau dossier">+</button>
+        </div>
+        <div id="categories-tree" class="categories-tree"></div>
+      </nav>
+
+      <!-- Pied de barre latérale : État de synchronisation -->
+      <div class="sidebar-footer">
+        <div id="sync-status-box" class="sync-status-box">
+          <span id="sync-dot" class="sync-dot"></span>
+          <span id="sync-text" class="sync-text">Prêt</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- COLONNE CENTRALE : FIL D'ARTICLES (STYLE 01NET ÉPURÉ) -->
+    <main class="feed-column">
+      <header class="feed-topbar">
+        <div class="feed-topbar-left">
+          <button id="btn-mobile-sidebar" class="icon-btn mobile-only" title="Menu">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="3" y1="6" x2="21" y2="6"/>
+              <line x1="3" y1="12" x2="21" y2="12"/>
+              <line x1="3" y1="18" x2="21" y2="18"/>
+            </svg>
+          </button>
+          <div class="current-view-heading">
+            <h1 id="current-view-title">Toute l'actualité</h1>
+            <span id="current-view-subtitle" class="current-view-subtitle">Fil éditorial en temps réel</span>
+          </div>
+        </div>
+
+        <div class="feed-topbar-right">
+          <!-- Barre de recherche -->
+          <div class="search-box">
+            <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input id="search-input" type="search" placeholder="Rechercher un article, média..." autocomplete="off" />
+            <kbd class="search-kbd">/</kbd>
+          </div>
+
+          <!-- Filtre rapide Non lus uniquement -->
+          <button id="btn-toggle-unread-only" class="pill-toggle" title="Afficher uniquement les articles non lus">
+            <span class="pill-dot"></span>
+            <span>Non lus</span>
+          </button>
+
+          <!-- Sélecteur de disposition (Éditorial 01net / Compact / Magazine) -->
+          <div class="view-switcher" role="group" aria-label="Mode d'affichage">
+            <button class="view-switch-btn active" data-view-mode="editorial" title="Vue Éditoriale (style 01net avec petites vignettes discrètes)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="4" width="5" height="5" rx="1"/>
+                <line x1="11" y1="5" x2="21" y2="5"/>
+                <line x1="11" y1="8" x2="18" y2="8"/>
+                <rect x="3" y="14" width="5" height="5" rx="1"/>
+                <line x1="11" y1="15" x2="21" y2="15"/>
+                <line x1="11" y1="18" x2="18" y2="18"/>
+              </svg>
+            </button>
+            <button class="view-switch-btn" data-view-mode="compact" title="Vue Compacte">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="3" y1="6" x2="21" y2="6"/>
+                <line x1="3" y1="12" x2="21" y2="12"/>
+                <line x1="3" y1="18" x2="21" y2="18"/>
+              </svg>
+            </button>
+            <button class="view-switch-btn" data-view-mode="cards" title="Vue Grille Magazine">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7" rx="1"/>
+                <rect x="14" y="3" width="7" height="7" rx="1"/>
+                <rect x="3" y="14" width="7" height="7" rx="1"/>
+                <rect x="14" y="14" width="7" height="7" rx="1"/>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Tout marquer comme lu -->
+          <button id="btn-mark-all-read" class="icon-btn" title="Tout marquer comme lu dans cette vue">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6 7 17l-5-5"/>
+              <path d="m22 10-7.5 7.5L13 16"/>
+            </svg>
+          </button>
+
+          <!-- Actualiser les flux -->
+          <button id="btn-sync" class="icon-btn" title="Actualiser les flux RSS (r)">
+            <svg id="sync-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+              <path d="M3 3v5h5"/>
+              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+              <path d="M16 16h5v5"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Barre de progression fine pendant la synchronisation -->
+      <div id="sync-progress-bar" class="sync-progress-bar hidden">
+        <div id="sync-progress-fill" class="sync-progress-fill"></div>
+      </div>
+
+      <!-- Conteneur de la liste d'articles -->
+      <div id="articles-scroll-container" class="articles-scroll-container">
+        <div id="articles-list" class="articles-list view-editorial"></div>
+        <div id="load-more-container" class="load-more-container hidden">
+          <button id="btn-load-more" class="btn-subtle">Afficher plus d'articles</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- PANNEAU DE LECTURE ÉPURÉ (READER VIEW) -->
+    <section id="reader-pane" class="reader-pane hidden" aria-label="Panneau de lecture">
+      <header class="reader-topbar">
+        <div class="reader-topbar-left">
+          <button id="btn-close-reader" class="icon-btn" title="Fermer le panneau de lecture (Échap)">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+          <div class="reader-nav-arrows">
+            <button id="btn-prev-article" class="icon-btn" title="Article précédent (k)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="18 15 12 9 6 15"/>
+              </svg>
+            </button>
+            <button id="btn-next-article" class="icon-btn" title="Article suivant (j)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="reader-topbar-right">
+          <!-- Mode Article Complet (extraction web) -->
+          <button id="btn-extract-full" class="btn-reader-pill" title="Extraire l'article complet depuis le site source (f)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 6h16M4 12h16M4 18h11"/>
+            </svg>
+            <span>Article complet</span>
+          </button>
+
+          <!-- Marquer lu / non-lu -->
+          <button id="btn-reader-toggle-read" class="icon-btn" title="Marquer comme lu / non-lu (m)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="8"/>
+            </svg>
+          </button>
+
+          <!-- Favori -->
+          <button id="btn-reader-star" class="icon-btn" title="Ajouter aux favoris (s)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+            </svg>
+          </button>
+
+          <!-- Options typographiques -->
+          <div class="typography-dropdown-wrapper">
+            <button id="btn-typography" class="icon-btn" title="Apparence du texte">
+              <span class="aa-label">Aa</span>
+            </button>
+            <div id="typography-popover" class="typography-popover hidden">
+              <div class="popover-section">
+                <span class="popover-label">Police</span>
+                <div class="font-family-group">
+                  <button class="font-btn active" data-font="sans">Sans</button>
+                  <button class="font-btn font-serif-preview" data-font="serif">Serif</button>
+                  <button class="font-btn font-mono-preview" data-font="mono">Mono</button>
+                </div>
+              </div>
+              <div class="popover-section">
+                <span class="popover-label">Taille du texte</span>
+                <div class="font-size-group">
+                  <button class="size-btn" data-size="small">A−</button>
+                  <button class="size-btn active" data-size="medium">A</button>
+                  <button class="size-btn" data-size="large">A+</button>
+                  <button class="size-btn" data-size="xlarge">A++</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Plein écran / mode Zen -->
+          <button id="btn-reader-zen" class="icon-btn" title="Mode lecture plein écran centré (z)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="15 3 21 3 21 9"/>
+              <polyline points="9 21 3 21 3 15"/>
+              <line x1="21" y1="3" x2="14" y2="10"/>
+              <line x1="3" y1="21" x2="10" y2="14"/>
+            </svg>
+          </button>
+
+          <!-- Ouvrir sur le site original -->
+          <a id="btn-reader-external" href="#" target="_blank" rel="noopener noreferrer" class="btn-external-site" title="Ouvrir l'article sur le site d'origine (v)">
+            <span>Site original</span>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M7 17L17 7M7 7h10v10"/>
+            </svg>
+          </a>
+        </div>
+      </header>
+
+      <div id="reader-scroll" class="reader-scroll">
+        <article id="reader-article" class="reader-article font-sans size-medium"></article>
+      </div>
+    </section>
+  </div>
+
+  <!-- MODALE : AJOUTER UN FLUX RSS -->
+  <div id="modal-add-feed" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>Ajouter un flux RSS</h2>
+        <button class="icon-btn modal-close" data-close="modal-add-feed">✕</button>
+      </div>
+      <form id="form-add-feed" class="modal-body">
+        <div class="form-group">
+          <label for="input-feed-url">Adresse du site web ou du flux RSS / Atom</label>
+          <input
+            id="input-feed-url"
+            type="text"
+            placeholder="Ex : https://www.01net.com ou https://korben.info/feed"
+            required
+          />
+          <span class="form-hint">Collez simplement l'adresse d'un site : Flux détectera automatiquement son fil RSS.</span>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="select-feed-category">Dossier / Catégorie</label>
+            <select id="select-feed-category"></select>
+          </div>
+          <div class="form-group">
+            <label for="input-new-category">Ou nouveau dossier</label>
+            <input id="input-new-category" type="text" placeholder="Ex : Hardware, Cinéma..." />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="input-feed-title">Titre personnalisé (optionnel)</label>
+          <input id="input-feed-title" type="text" placeholder="Laisser vide pour utiliser le nom du média" />
+        </div>
+
+        <label class="checkbox-row">
+          <input id="input-feed-autofull" type="checkbox" />
+          <span>Toujours extraire l'article complet automatiquement à l'ouverture</span>
+        </label>
+
+        <div id="add-feed-error" class="form-error hidden"></div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn-ghost modal-close" data-close="modal-add-feed">Annuler</button>
+          <button id="btn-submit-add-feed" type="submit" class="btn-primary">Ajouter le flux</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODALE : IMPORT / EXPORT OPML (MIGRATION FRESHRSS) -->
+  <div id="modal-opml" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>Migration FreshRSS & OPML</h2>
+        <button class="icon-btn modal-close" data-close="modal-opml">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="opml-section">
+          <h3>Importer vos abonnements depuis FreshRSS</h3>
+          <p class="section-desc">
+            Dans FreshRSS, allez dans <strong>Gestion des abonnements → Importer / Exporter → Exporter en OPML</strong>, puis sélectionnez le fichier obtenu ci-dessous. Tous vos dossiers et flux seront recréés automatiquement.
+          </p>
+
+          <label for="input-opml-file" class="file-dropzone" id="opml-dropzone">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="12" y1="18" x2="12" y2="12"/>
+              <polyline points="9 15 12 12 15 15"/>
+            </svg>
+            <span id="opml-file-label">Cliquez pour choisir un fichier <strong>.opml</strong> ou <strong>.xml</strong></span>
+            <input id="input-opml-file" type="file" accept=".opml,.xml,text/xml,application/xml" hidden />
+          </label>
+
+          <label class="checkbox-row">
+            <input id="input-opml-replace" type="checkbox" />
+            <span>Remplacer les flux de démonstration existants par cet import</span>
+          </label>
+
+          <div id="opml-status" class="form-hint"></div>
+
+          <div class="opml-actions">
+            <button id="btn-import-opml" class="btn-primary" disabled>Lancer l'importation OPML</button>
+          </div>
+        </div>
+
+        <hr class="modal-divider" />
+
+        <div class="opml-section">
+          <h3>Exporter vos flux actuels</h3>
+          <p class="section-desc">Téléchargez une sauvegarde complète de vos dossiers et flux au format standard OPML 2.0.</p>
+          <a href="/api/opml/export" class="btn-secondary-inline" download="abonnements-flux-rss.opml">
+            Télécharger le fichier OPML
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODALE : RACCOURCIS CLAVIER -->
+  <div id="modal-shortcuts" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>Raccourcis clavier</h2>
+        <button class="icon-btn modal-close" data-close="modal-shortcuts">✕</button>
+      </div>
+      <div class="modal-body shortcuts-grid">
+        <div class="shortcut-row"><kbd>j</kbd><span>Article suivant</span></div>
+        <div class="shortcut-row"><kbd>k</kbd><span>Article précédent</span></div>
+        <div class="shortcut-row"><kbd>m</kbd><span>Marquer comme lu / non-lu</span></div>
+        <div class="shortcut-row"><kbd>s</kbd><span>Ajouter / retirer des favoris</span></div>
+        <div class="shortcut-row"><kbd>f</kbd><span>Charger l'article complet (Reader View)</span></div>
+        <div class="shortcut-row"><kbd>v</kbd><span>Ouvrir l'article sur le site original</span></div>
+        <div class="shortcut-row"><kbd>z</kbd><span>Basculer le mode lecture plein écran</span></div>
+        <div class="shortcut-row"><kbd>r</kbd><span>Actualiser tous les flux</span></div>
+        <div class="shortcut-row"><kbd>/</kbd><span>Rechercher dans les articles</span></div>
+        <div class="shortcut-row"><kbd>t</kbd><span>Basculer le thème Clair / Sombre</span></div>
+        <div class="shortcut-row"><kbd>Échap</kbd><span>Fermer le panneau de lecture / modale</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATIONS -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

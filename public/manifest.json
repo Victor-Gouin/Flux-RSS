@@ -1,0 +1,9 @@
+{
+  "name": "Flux — Agrégateur RSS Épuré",
+  "short_name": "Flux RSS",
+  "description": "Lecteur de flux RSS moderne et minimaliste",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f8fa",
+  "theme_color": "#2563eb"
+}
