@@ -2,6 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { parseFeedContent, decodeEntities } = require('../server/rssParser');
 const { parseOpml, generateOpml } = require('../server/opml');
+const { hashPassword, verifyPassword, parseCookies } = require('../server/auth');
+const { generateDailyBriefing, performAiSearch } = require('../server/ai');
 
 test('parseFeedContent analyse un flux RSS 2.0 avec vignette media:content et CDATA', () => {
   const sampleRss = `<?xml version="1.0" encoding="UTF-8"?>
@@ -55,4 +57,45 @@ test('parseOpml et generateOpml importent et exportent la hiérarchie FreshRSS',
 
 test('decodeEntities décode correctement les entités françaises et numériques', () => {
   assert.equal(decodeEntities('L&rsquo;&eacute;t&eacute; &laquo;2026&raquo; &#8212; 100&euro;'), 'L’été «2026» — 100€');
+});
+
+test('hashPassword et verifyPassword vérifient les mots de passe de manière sécurisée', () => {
+  const hash = hashPassword('MonMotDePasseSecret!');
+  assert.equal(verifyPassword('MonMotDePasseSecret!', hash), true);
+  assert.equal(verifyPassword('MauvaisMotDePasse', hash), false);
+
+  const cookies = parseCookies('flux_session=abc123token; theme=dark');
+  assert.equal(cookies.flux_session, 'abc123token');
+  assert.equal(cookies.theme, 'dark');
+});
+
+test('generateDailyBriefing et performAiSearch détectent les thèmes et les CVE', async () => {
+  const sampleArticles = [
+    {
+      id: 1,
+      feed_id: 1,
+      title: 'Alerte critique : vulnérabilité CVE-2026-4821 dans OpenSSH corrigée en urgence',
+      summary: 'Une faille zero-day permettant une exécution de code à distance a été identifiée par le CERT-FR (CERTFR-2026-ALE-012).',
+      feed_title: 'CERT-FR',
+      published_at: new Date().toISOString()
+    },
+    {
+      id: 2,
+      feed_id: 2,
+      title: 'Nouveau modèle IA open source : performances en hausse pour les LLM locaux',
+      summary: 'Les derniers benchmarks montrent une avancée majeure en intelligence artificielle.',
+      feed_title: '01net',
+      published_at: new Date().toISOString()
+    }
+  ];
+
+  const briefing = await generateDailyBriefing(sampleArticles);
+  assert.equal(briefing.totalAnalyzed, 2);
+  assert.equal(briefing.securityAlerts.length, 1);
+  assert.deepEqual(briefing.securityAlerts[0].securityIds, ['CVE-2026-4821', 'CERTFR-2026-ALE-012']);
+
+  const cveSearch = await performAiSearch('Quelles sont les dernières CVE sorties ?', sampleArticles);
+  assert.equal(cveSearch.totalMatches, 1);
+  assert.equal(cveSearch.results[0].article.id, 1);
+  assert.match(cveSearch.answerMarkdown, /CVE-2026-4821/);
 });

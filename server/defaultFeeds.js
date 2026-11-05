@@ -1,11 +1,11 @@
 /**
- * Flux de démonstration proposés lors du premier lancement (notamment 01net et grands médias tech/actu)
- * L'utilisateur peut aussi importer directement son fichier OPML FreshRSS ou supprimer ces flux.
+ * Flux de démonstration proposés lors du premier lancement (notamment 01net, CERT-FR pour les CVE, et grands médias tech/actu)
  */
 const DEFAULT_CATEGORIES = [
   { name: 'Tech & Numérique', color: '#3b82f6', position: 1 },
-  { name: 'Culture Geek & Web', color: '#8b5cf6', position: 2 },
-  { name: 'Actualités', color: '#10b981', position: 3 }
+  { name: 'Cybersécurité & CVE', color: '#ef4444', position: 2 },
+  { name: 'Culture Geek & Web', color: '#8b5cf6', position: 3 },
+  { name: 'Actualités', color: '#10b981', position: 4 }
 ];
 
 const DEFAULT_FEEDS = [
@@ -29,6 +29,13 @@ const DEFAULT_FEEDS = [
     siteUrl: 'https://www.numerama.com',
     category: 'Tech & Numérique',
     description: 'Média de référence sur la société numérique, la tech et les sciences'
+  },
+  {
+    title: 'CERT-FR (ANSSI — Alertes & Avis CVE)',
+    xmlUrl: 'https://www.cert.ssi.gouv.fr/feed/',
+    siteUrl: 'https://www.cert.ssi.gouv.fr',
+    category: 'Cybersécurité & CVE',
+    description: 'Avis de sécurité officiels, vulnérabilités CVE et alertes du CERT-FR (ANSSI)'
   },
   {
     title: 'Korben',

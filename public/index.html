@@ -11,7 +11,69 @@
   <link rel="stylesheet" href="/css/styles.css" />
 </head>
 <body>
-  <div id="app" class="app-shell">
+  <!-- ÉCRAN D'AUTHENTIFICATION (LOGIN OBLIGATOIRE OU ACTIVATION D'INVITATION) -->
+  <div id="auth-screen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="brand-logo auth-logo">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 11a9 9 0 0 1 9 9" />
+            <path d="M4 4a16 16 0 0 1 16 16" />
+            <circle cx="5" cy="19" r="1.5" fill="currentColor" />
+          </svg>
+        </div>
+        <h1 class="auth-title">Flux</h1>
+        <p id="auth-subtitle" class="auth-subtitle">Connectez-vous pour accéder à votre espace de veille</p>
+      </div>
+
+      <!-- FORMULAIRE DE CONNEXION STANDARD -->
+      <form id="form-login" class="auth-form">
+        <div class="form-group">
+          <label for="login-username">Identifiant</label>
+          <input id="login-username" type="text" autocomplete="username" placeholder="Ex : admin" required autofocus />
+        </div>
+        <div class="form-group">
+          <label for="login-password">Mot de passe</label>
+          <input id="login-password" type="password" autocomplete="current-password" placeholder="••••••••" required />
+        </div>
+        <div id="login-error" class="form-error hidden"></div>
+        <button id="btn-login-submit" type="submit" class="btn-primary auth-submit-btn">Se connecter</button>
+        <p class="auth-private-notice">
+          Accès privé — Les inscriptions publiques sont désactivées.<br />
+          L'ouverture d'un compte se fait uniquement sur invitation d'un administrateur.
+        </p>
+      </form>
+
+      <!-- FORMULAIRE D'ACTIVATION D'INVITATION (?invite=TOKEN) -->
+      <form id="form-accept-invite" class="auth-form hidden">
+        <div class="invite-banner" id="invite-banner-info">
+          Invitation privée valide — configurez vos identifiants pour créer votre compte.
+        </div>
+        <div class="form-group">
+          <label for="invite-username">Choisissez votre identifiant</label>
+          <input id="invite-username" type="text" autocomplete="username" placeholder="Ex : victor" required />
+        </div>
+        <div class="form-group">
+          <label for="invite-display-name">Nom affiché</label>
+          <input id="invite-display-name" type="text" placeholder="Ex : Victor" />
+        </div>
+        <div class="form-group">
+          <label for="invite-password">Choisissez un mot de passe (min. 6 caractères)</label>
+          <input id="invite-password" type="password" autocomplete="new-password" placeholder="••••••••" required />
+        </div>
+        <label class="checkbox-row">
+          <input id="invite-seed-feeds" type="checkbox" checked />
+          <span>Pré-charger les flux de démonstration (01net, Numerama, Korben…)</span>
+        </label>
+        <div id="invite-error" class="form-error hidden"></div>
+        <button id="btn-invite-submit" type="submit" class="btn-primary auth-submit-btn">Activer mon compte</button>
+        <button id="btn-back-to-login" type="button" class="btn-ghost auth-back-btn">Retour à la connexion</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- APPLICATION PRINCIPALE (MASQUÉE TANT QUE NON AUTHENTIFIÉ) -->
+  <div id="app" class="app-shell hidden">
     <!-- BARRE LATÉRALE GAUCHE -->
     <aside id="sidebar" class="sidebar">
       <div class="sidebar-header">
@@ -68,6 +130,29 @@
 
       <!-- Navigation intelligente -->
       <nav class="sidebar-nav">
+        <div class="nav-section-label">Intelligence Artificielle</div>
+        <button class="nav-item" data-filter="ai-briefing">
+          <span class="nav-item-left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3l1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3Z"/>
+            </svg>
+            <span>Résumé IA du jour</span>
+          </span>
+          <span class="nav-badge">IA</span>
+        </button>
+
+        <button class="nav-item" data-filter="ai-search">
+          <span class="nav-item-left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              <path d="M11 8v6M8 11h6"/>
+            </svg>
+            <span>Recherche & Veille IA</span>
+          </span>
+          <span class="nav-badge">CVE</span>
+        </button>
+
         <div class="nav-section-label">Vues</div>
         <button class="nav-item active" data-filter="all">
           <span class="nav-item-left">
@@ -124,11 +209,38 @@
         <div id="categories-tree" class="categories-tree"></div>
       </nav>
 
-      <!-- Pied de barre latérale : État de synchronisation -->
+      <!-- Pied de barre latérale : État de synchro + Profil Utilisateur & Admin -->
       <div class="sidebar-footer">
         <div id="sync-status-box" class="sync-status-box">
           <span id="sync-dot" class="sync-dot"></span>
           <span id="sync-text" class="sync-text">Prêt</span>
+        </div>
+
+        <div class="user-profile-bar">
+          <div class="user-profile-info" id="btn-open-account" title="Paramètres du compte & Administration">
+            <div id="user-avatar" class="user-avatar">A</div>
+            <div class="user-meta">
+              <span id="user-display-name" class="user-display-name">Admin</span>
+              <span id="user-role-badge" class="user-role-badge">Admin</span>
+            </div>
+          </div>
+          <div class="user-profile-actions">
+            <button id="btn-open-admin" class="icon-btn hidden" title="Administration : Comptes & Liens d'invitation">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+                <line x1="19" y1="8" x2="19" y2="14"/>
+                <line x1="22" y1="11" x2="16" y2="11"/>
+              </svg>
+            </button>
+            <button id="btn-logout" class="icon-btn" title="Se déconnecter">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                <polyline points="16 17 21 12 16 7"/>
+                <line x1="21" y1="12" x2="9" y2="12"/>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </aside>
@@ -151,7 +263,6 @@
         </div>
 
         <div class="feed-topbar-right">
-          <!-- Barre de recherche -->
           <div class="search-box">
             <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="11" cy="11" r="8"/>
@@ -161,13 +272,11 @@
             <kbd class="search-kbd">/</kbd>
           </div>
 
-          <!-- Filtre rapide Non lus uniquement -->
           <button id="btn-toggle-unread-only" class="pill-toggle" title="Afficher uniquement les articles non lus">
             <span class="pill-dot"></span>
             <span>Non lus</span>
           </button>
 
-          <!-- Sélecteur de disposition (Éditorial 01net / Compact / Magazine) -->
           <div class="view-switcher" role="group" aria-label="Mode d'affichage">
             <button class="view-switch-btn active" data-view-mode="editorial" title="Vue Éditoriale (style 01net avec petites vignettes discrètes)">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -196,7 +305,6 @@
             </button>
           </div>
 
-          <!-- Tout marquer comme lu -->
           <button id="btn-mark-all-read" class="icon-btn" title="Tout marquer comme lu dans cette vue">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M18 6 7 17l-5-5"/>
@@ -204,7 +312,6 @@
             </svg>
           </button>
 
-          <!-- Actualiser les flux -->
           <button id="btn-sync" class="icon-btn" title="Actualiser les flux RSS (r)">
             <svg id="sync-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
@@ -216,12 +323,10 @@
         </div>
       </header>
 
-      <!-- Barre de progression fine pendant la synchronisation -->
       <div id="sync-progress-bar" class="sync-progress-bar hidden">
         <div id="sync-progress-fill" class="sync-progress-fill"></div>
       </div>
 
-      <!-- Conteneur de la liste d'articles -->
       <div id="articles-scroll-container" class="articles-scroll-container">
         <div id="articles-list" class="articles-list view-editorial"></div>
         <div id="load-more-container" class="load-more-container hidden">
@@ -255,7 +360,6 @@
         </div>
 
         <div class="reader-topbar-right">
-          <!-- Mode Article Complet (extraction web) -->
           <button id="btn-extract-full" class="btn-reader-pill" title="Extraire l'article complet depuis le site source (f)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M4 6h16M4 12h16M4 18h11"/>
@@ -263,21 +367,18 @@
             <span>Article complet</span>
           </button>
 
-          <!-- Marquer lu / non-lu -->
           <button id="btn-reader-toggle-read" class="icon-btn" title="Marquer comme lu / non-lu (m)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="8"/>
             </svg>
           </button>
 
-          <!-- Favori -->
           <button id="btn-reader-star" class="icon-btn" title="Ajouter aux favoris (s)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
             </svg>
           </button>
 
-          <!-- Options typographiques -->
           <div class="typography-dropdown-wrapper">
             <button id="btn-typography" class="icon-btn" title="Apparence du texte">
               <span class="aa-label">Aa</span>
@@ -303,7 +404,6 @@
             </div>
           </div>
 
-          <!-- Plein écran / mode Zen -->
           <button id="btn-reader-zen" class="icon-btn" title="Mode lecture plein écran centré (z)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="15 3 21 3 21 9"/>
@@ -313,7 +413,6 @@
             </svg>
           </button>
 
-          <!-- Ouvrir sur le site original -->
           <a id="btn-reader-external" href="#" target="_blank" rel="noopener noreferrer" class="btn-external-site" title="Ouvrir l'article sur le site d'origine (v)">
             <span>Site original</span>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
@@ -327,6 +426,162 @@
         <article id="reader-article" class="reader-article font-sans size-medium"></article>
       </div>
     </section>
+  </div>
+
+  <!-- MODALE : ADMINISTRATION (COMPTES UTILISATEURS, LIENS D'INVITATION & MOT DE PASSE) -->
+  <div id="modal-admin" class="modal-backdrop hidden">
+    <div class="modal-card modal-card-wide">
+      <div class="modal-header">
+        <h2>Gestion des comptes & Invitations</h2>
+        <button class="icon-btn modal-close" data-close="modal-admin">✕</button>
+      </div>
+
+      <div class="modal-tabs" id="admin-tabs-bar">
+        <button class="modal-tab active" data-admin-tab="tab-invitations">Liens d'invitation</button>
+        <button class="modal-tab" data-admin-tab="tab-users">Comptes utilisateurs</button>
+        <button class="modal-tab" data-admin-tab="tab-ai-config">Moteur IA</button>
+        <button class="modal-tab" data-admin-tab="tab-password">Mon mot de passe</button>
+      </div>
+
+      <div class="modal-body modal-body-scroll">
+        <!-- ONGLET 1 : LIENS D'INVITATION (ADMIN) -->
+        <div id="tab-invitations" class="admin-tab-pane">
+          <form id="form-create-invite" class="admin-box">
+            <h3>Générer un lien d'invitation à usage unique</h3>
+            <p class="section-desc">
+              Les inscriptions publiques étant désactivées, envoyez ce lien à la personne que vous souhaitez inviter.
+            </p>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="inv-label">Destinataire / Note (optionnel)</label>
+                <input id="inv-label" type="text" placeholder="Ex : Thomas" />
+              </div>
+              <div class="form-group">
+                <label for="inv-username">Identifiant pré-rempli (optionnel)</label>
+                <input id="inv-username" type="text" placeholder="Ex : thomas" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="inv-role">Rôle attribué</label>
+                <select id="inv-role">
+                  <option value="user">Utilisateur standard</option>
+                  <option value="admin">Administrateur</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="inv-days">Durée de validité</label>
+                <select id="inv-days">
+                  <option value="1">24 heures</option>
+                  <option value="7" selected>7 jours</option>
+                  <option value="30">30 jours</option>
+                </select>
+              </div>
+            </div>
+            <button type="submit" class="btn-primary">Générer un lien d'invitation</button>
+          </form>
+
+          <!-- Zone d'affichage du dernier lien généré -->
+          <div id="generated-invite-box" class="generated-invite-box hidden">
+            <span class="popover-label">Lien d'invitation prêt à partager :</span>
+            <div class="invite-copy-row">
+              <input id="generated-invite-url" type="text" readonly />
+              <button id="btn-copy-generated-invite" type="button" class="btn-primary">Copier le lien</button>
+            </div>
+          </div>
+
+          <h3 class="admin-subheading">Historique des invitations</h3>
+          <div id="admin-invitations-list" class="admin-list"></div>
+        </div>
+
+        <!-- ONGLET 2 : CRÉER & GÉRER LES COMPTES UTILISATEURS (ADMIN) -->
+        <div id="tab-users" class="admin-tab-pane hidden">
+          <form id="form-create-user" class="admin-box">
+            <h3>Créer directement un compte utilisateur</h3>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="new-user-username">Identifiant *</label>
+                <input id="new-user-username" type="text" placeholder="Ex : marie" required />
+              </div>
+              <div class="form-group">
+                <label for="new-user-display">Nom affiché</label>
+                <input id="new-user-display" type="text" placeholder="Ex : Marie" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="new-user-password">Mot de passe initial *</label>
+                <input id="new-user-password" type="password" placeholder="Min. 6 caractères" required />
+              </div>
+              <div class="form-group">
+                <label for="new-user-role">Rôle</label>
+                <select id="new-user-role">
+                  <option value="user">Utilisateur standard</option>
+                  <option value="admin">Administrateur</option>
+                </select>
+              </div>
+            </div>
+            <label class="checkbox-row">
+              <input id="new-user-seed" type="checkbox" checked />
+              <span>Ajouter les flux par défaut (01net, Numerama, Korben…) dans son espace</span>
+            </label>
+            <div id="create-user-error" class="form-error hidden"></div>
+            <button type="submit" class="btn-primary">Créer le compte</button>
+          </form>
+
+          <h3 class="admin-subheading">Utilisateurs enregistrés</h3>
+          <div id="admin-users-list" class="admin-list"></div>
+        </div>
+
+        <!-- ONGLET 3 : CONFIGURATION DU MOTEUR IA -->
+        <div id="tab-ai-config" class="admin-tab-pane hidden">
+          <form id="form-ai-config" class="admin-box">
+            <h3>Configuration du Moteur d'Intelligence Artificielle</h3>
+            <p class="section-desc">
+              Par défaut, Flux intègre un <strong>Moteur IA Sémantique Local</strong> qui fonctionne immédiatement sans clé API. Vous pouvez aussi connecter votre propre clé LLM (Gemini, OpenAI, Mistral ou Ollama local) pour des synthèses génératives avancées.
+            </p>
+            <div class="form-group">
+              <label for="ai-provider-select">Fournisseur IA</label>
+              <select id="ai-provider-select">
+                <option value="local">Moteur Sémantique IA Local (Intégré — Sans clé API)</option>
+                <option value="gemini">Google Gemini API (ex: gemini-2.5-flash)</option>
+                <option value="openai">OpenAI API (ex: gpt-4o-mini)</option>
+                <option value="mistral">Mistral AI API (ex: mistral-small-latest)</option>
+                <option value="ollama">Ollama (Modèle local sur votre machine)</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="ai-api-key">Clé API (si Gemini / OpenAI / Mistral)</label>
+                <input id="ai-api-key" type="password" placeholder="AIza... ou sk-..." />
+              </div>
+              <div class="form-group">
+                <label for="ai-model-name">Modèle (optionnel)</label>
+                <input id="ai-model-name" type="text" placeholder="Ex: gemini-2.5-flash" />
+              </div>
+            </div>
+            <button type="submit" class="btn-primary">Enregistrer la configuration IA</button>
+          </form>
+        </div>
+
+        <!-- ONGLET 4 : MON MOT DE PASSE (TOUS LES UTILISATEURS) -->
+        <div id="tab-password" class="admin-tab-pane hidden">
+          <form id="form-change-password" class="admin-box">
+            <h3>Modifier mon mot de passe</h3>
+            <div class="form-group">
+              <label for="pwd-current">Mot de passe actuel</label>
+              <input id="pwd-current" type="password" required />
+            </div>
+            <div class="form-group">
+              <label for="pwd-new">Nouveau mot de passe (min. 6 caractères)</label>
+              <input id="pwd-new" type="password" required />
+            </div>
+            <div id="change-pwd-error" class="form-error hidden"></div>
+            <button type="submit" class="btn-primary">Enregistrer le nouveau mot de passe</button>
+          </form>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- MODALE : AJOUTER UN FLUX RSS -->

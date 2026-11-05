@@ -1,5 +1,5 @@
 /**
- * Serveur principal Flux RSS (HTTP + API REST + Synchronisation en arrière-plan)
+ * Serveur principal Flux RSS (HTTP + Authentification + API REST + Synchronisation en arrière-plan)
  */
 
 const http = require('node:http');
@@ -9,6 +9,19 @@ const { URL } = require('node:url');
 
 const {
   db,
+  authenticateUser,
+  createSession,
+  getUserBySessionToken,
+  deleteSession,
+  createUserAccount,
+  updateUserPassword,
+  listUsers,
+  deleteUserAccount,
+  createInvitation,
+  getInvitationByToken,
+  acceptInvitation,
+  listInvitations,
+  deleteInvitation,
   getOrCreateCategory,
   getSidebarData,
   getArticles,
@@ -16,8 +29,17 @@ const {
   upsertArticlesForFeed,
   markAllRead,
   getSettings,
-  updateSettings
+  updateSettings,
+  getRecentArticlesForBriefing,
+  getAllArticlesForSearch
 } = require('./db');
+const { generateDailyBriefing, performAiSearch } = require('./ai');
+const {
+  SESSION_COOKIE_NAME,
+  parseCookies,
+  buildSessionCookie,
+  buildClearSessionCookie
+} = require('./auth');
 const { parseFeedContent } = require('./rssParser');
 const {
   fetchUrlText,
@@ -55,9 +77,9 @@ const syncState = {
 };
 
 /**
- * Enrichit en arrière-plan les vignettes (og:image) des articles récents qui n'avaient pas d'image dans le flux XML
+ * Enrichit en arrière-plan les vignettes (og:image) des articles récents sans image
  */
-async function enrichMissingThumbnails(feedId, limit = 6) {
+async function enrichMissingThumbnails(feedId, limit = 5) {
   const missing = db
     .prepare(`
       SELECT id, url
@@ -79,7 +101,7 @@ async function enrichMissingThumbnails(feedId, limit = 6) {
         updateStmt.run(ogImage, row.id);
       }
     } catch {
-      // Ignorer silencieusement si la page bloque ou expire
+      // ignore
     }
   }
 }
@@ -128,9 +150,7 @@ async function syncSingleFeed(feed) {
       feed.id
     );
 
-    // Enrichir en tâche de fond les vignettes manquantes sur les articles récents
     enrichMissingThumbnails(feed.id, 5).catch(() => {});
-
     return { feedId: feed.id, inserted, error: null };
   } catch (err) {
     const errorMsg = err.message || 'Erreur de synchronisation';
@@ -144,16 +164,25 @@ async function syncSingleFeed(feed) {
 }
 
 /**
- * Synchronise tous les flux (ou un flux spécifique) avec parallélisme contrôlé
+ * Synchronise les flux d'un utilisateur (ou tous les flux du serveur pour le cron)
  */
-async function syncFeeds(targetFeedId = null) {
-  if (syncState.isSyncing && !targetFeedId) {
+async function syncFeeds({ userId = null, feedId = null } = {}) {
+  if (syncState.isSyncing && !feedId && !userId) {
     return syncState;
   }
 
-  const feeds = targetFeedId
-    ? db.prepare(`SELECT * FROM feeds WHERE id = ?`).all(Number(targetFeedId))
-    : db.prepare(`SELECT * FROM feeds ORDER BY id ASC`).all();
+  let feeds;
+  if (feedId && userId) {
+    feeds = db
+      .prepare(`SELECT * FROM feeds WHERE id = ? AND user_id = ?`)
+      .all(Number(feedId), Number(userId));
+  } else if (userId) {
+    feeds = db
+      .prepare(`SELECT * FROM feeds WHERE user_id = ? ORDER BY id ASC`)
+      .all(Number(userId));
+  } else {
+    feeds = db.prepare(`SELECT * FROM feeds ORDER BY id ASC`).all();
+  }
 
   if (feeds.length === 0) {
     return { isSyncing: false, total: 0, completed: 0, newArticles: 0 };
@@ -190,13 +219,14 @@ async function syncFeeds(targetFeedId = null) {
 }
 
 /**
- * Utilitaires HTTP JSON
+ * Utilitaires HTTP JSON & Session
  */
-function sendJson(res, statusCode, payload) {
+function sendJson(res, statusCode, payload, extraHeaders = {}) {
   const body = JSON.stringify(payload);
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store'
+    'Cache-Control': 'no-store',
+    ...extraHeaders
   });
   res.end(body);
 }
@@ -218,12 +248,18 @@ function readJsonBody(req, maxBytes = 10 * 1024 * 1024) {
       try {
         const raw = Buffer.concat(chunks).toString('utf-8');
         resolve(raw ? JSON.parse(raw) : {});
-      } catch (e) {
+      } catch {
         reject(new Error('JSON invalide'));
       }
     });
     req.on('error', reject);
   });
+}
+
+function getAuthenticatedUser(req) {
+  const cookies = parseCookies(req.headers.cookie || '');
+  const token = cookies[SESSION_COOKIE_NAME];
+  return getUserBySessionToken(token);
 }
 
 /**
@@ -234,11 +270,197 @@ async function handleApi(req, res, urlObj) {
   const method = req.method.toUpperCase();
 
   try {
+    /* ======================================================================
+       ROUTES PUBLIQUES D'AUTHENTIFICATION & INVITATIONS
+       ====================================================================== */
+
+    // GET /api/auth/session
+    if (method === 'GET' && pathname === '/api/auth/session') {
+      const user = getAuthenticatedUser(req);
+      return sendJson(res, 200, {
+        authenticated: Boolean(user),
+        user: user || null
+      });
+    }
+
+    // POST /api/auth/login
+    if (method === 'POST' && pathname === '/api/auth/login') {
+      const body = await readJsonBody(req);
+      const user = authenticateUser(body.username, body.password);
+      if (!user) {
+        return sendJson(res, 401, { error: 'Identifiant ou mot de passe incorrect.' });
+      }
+      const session = createSession(user.id);
+      return sendJson(
+        res,
+        200,
+        { authenticated: true, user },
+        { 'Set-Cookie': buildSessionCookie(session.token) }
+      );
+    }
+
+    // POST /api/auth/logout
+    if (method === 'POST' && pathname === '/api/auth/logout') {
+      const cookies = parseCookies(req.headers.cookie || '');
+      if (cookies[SESSION_COOKIE_NAME]) {
+        deleteSession(cookies[SESSION_COOKIE_NAME]);
+      }
+      return sendJson(
+        res,
+        200,
+        { ok: true },
+        { 'Set-Cookie': buildClearSessionCookie() }
+      );
+    }
+
+    // GET /api/auth/invite/:token
+    const inviteCheckMatch = /^\/api\/auth\/invite\/([a-f0-9]+)$/i.exec(pathname);
+    if (method === 'GET' && inviteCheckMatch) {
+      const inv = getInvitationByToken(inviteCheckMatch[1]);
+      if (!inv || !inv.isValid) {
+        return sendJson(res, 404, {
+          valid: false,
+          error: inv?.isUsed
+            ? "Ce lien d'invitation a déjà été utilisé."
+            : "Ce lien d'invitation est invalide ou a expiré."
+        });
+      }
+      return sendJson(res, 200, {
+        valid: true,
+        label: inv.label,
+        suggestedUsername: inv.suggested_username,
+        role: inv.role,
+        expiresAt: inv.expires_at
+      });
+    }
+
+    // POST /api/auth/accept-invite
+    if (method === 'POST' && pathname === '/api/auth/accept-invite') {
+      const body = await readJsonBody(req);
+      const user = acceptInvitation({
+        token: body.token,
+        username: body.username,
+        displayName: body.displayName,
+        password: body.password,
+        seedFeeds: body.seedFeeds !== false
+      });
+
+      const session = createSession(user.id);
+      syncFeeds({ userId: user.id }).catch(() => {});
+
+      return sendJson(
+        res,
+        201,
+        { authenticated: true, user },
+        { 'Set-Cookie': buildSessionCookie(session.token) }
+      );
+    }
+
+    /* ======================================================================
+       TOUTES LES AUTRES ROUTES NÉCESSITENT D'ÊTRE CONNECTÉ
+       ====================================================================== */
+    const reqUser = getAuthenticatedUser(req);
+    if (!reqUser) {
+      return sendJson(res, 401, { error: 'Connexion requise' });
+    }
+
+    // POST /api/auth/password (Modifier son propre mot de passe)
+    if (method === 'POST' && pathname === '/api/auth/password') {
+      const body = await readJsonBody(req);
+      const verified = authenticateUser(reqUser.username, body.currentPassword);
+      if (!verified) {
+        return sendJson(res, 400, { error: 'Votre mot de passe actuel est incorrect.' });
+      }
+      updateUserPassword(reqUser.id, body.newPassword);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    /* ======================================================================
+       ROUTES D'ADMINISTRATION (RÉSERVÉES AUX COMPTES ADMIN)
+       ====================================================================== */
+    if (pathname.startsWith('/api/admin/')) {
+      if (reqUser.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Accès réservé aux administrateurs.' });
+      }
+
+      // GET /api/admin/overview
+      if (method === 'GET' && pathname === '/api/admin/overview') {
+        return sendJson(res, 200, {
+          users: listUsers(),
+          invitations: listInvitations()
+        });
+      }
+
+      // POST /api/admin/users (Créer directement un compte utilisateur)
+      if (method === 'POST' && pathname === '/api/admin/users') {
+        const body = await readJsonBody(req);
+        const created = createUserAccount({
+          username: body.username,
+          displayName: body.displayName,
+          password: body.password,
+          role: body.role || 'user',
+          seedFeeds: body.seedFeeds !== false
+        });
+        if (body.seedFeeds !== false) {
+          syncFeeds({ userId: created.id }).catch(() => {});
+        }
+        return sendJson(res, 201, {
+          user: created,
+          users: listUsers()
+        });
+      }
+
+      // PATCH /api/admin/users/:id/password (Réinitialiser le mot de passe d'un utilisateur)
+      const adminUserPwdMatch = /^\/api\/admin\/users\/(\d+)\/password$/.exec(pathname);
+      if (method === 'PATCH' && adminUserPwdMatch) {
+        const targetId = Number(adminUserPwdMatch[1]);
+        const body = await readJsonBody(req);
+        updateUserPassword(targetId, body.newPassword);
+        return sendJson(res, 200, { ok: true });
+      }
+
+      // DELETE /api/admin/users/:id
+      const adminUserDelMatch = /^\/api\/admin\/users\/(\d+)$/.exec(pathname);
+      if (method === 'DELETE' && adminUserDelMatch) {
+        const targetId = Number(adminUserDelMatch[1]);
+        deleteUserAccount(targetId, reqUser.id);
+        return sendJson(res, 200, { users: listUsers() });
+      }
+
+      // POST /api/admin/invitations (Générer un lien d'invitation à usage unique)
+      if (method === 'POST' && pathname === '/api/admin/invitations') {
+        const body = await readJsonBody(req);
+        const invitation = createInvitation({
+          label: body.label || '',
+          suggestedUsername: body.suggestedUsername || '',
+          role: body.role || 'user',
+          expiresInDays: body.expiresInDays || 7,
+          createdBy: reqUser.id
+        });
+        return sendJson(res, 201, {
+          invitation,
+          invitations: listInvitations()
+        });
+      }
+
+      // DELETE /api/admin/invitations/:id
+      const adminInvDelMatch = /^\/api\/admin\/invitations\/(\d+)$/.exec(pathname);
+      if (method === 'DELETE' && adminInvDelMatch) {
+        deleteInvitation(Number(adminInvDelMatch[1]));
+        return sendJson(res, 200, { invitations: listInvitations() });
+      }
+    }
+
+    /* ======================================================================
+       ROUTES FLUX RSS & ARTICLES (SCOPÉES À reqUser.id)
+       ====================================================================== */
+
     // GET /api/bootstrap
     if (method === 'GET' && pathname === '/api/bootstrap') {
-      const sidebar = getSidebarData();
-      const settings = getSettings();
+      const sidebar = getSidebarData(reqUser.id);
+      const settings = getSettings(reqUser.id);
       return sendJson(res, 200, {
+        user: reqUser,
         ...sidebar,
         settings,
         syncState
@@ -249,7 +471,7 @@ async function handleApi(req, res, urlObj) {
     if (method === 'GET' && pathname === '/api/sync/status') {
       return sendJson(res, 200, {
         syncState,
-        sidebar: getSidebarData()
+        sidebar: getSidebarData(reqUser.id)
       });
     }
 
@@ -257,10 +479,10 @@ async function handleApi(req, res, urlObj) {
     if (method === 'POST' && pathname === '/api/sync') {
       const body = await readJsonBody(req);
       const feedId = body.feedId ? Number(body.feedId) : null;
-      const result = await syncFeeds(feedId);
+      const result = await syncFeeds({ userId: reqUser.id, feedId });
       return sendJson(res, 200, {
         syncState: result,
-        sidebar: getSidebarData()
+        sidebar: getSidebarData(reqUser.id)
       });
     }
 
@@ -274,7 +496,7 @@ async function handleApi(req, res, urlObj) {
       const limit = Math.min(200, Math.max(1, Number(urlObj.searchParams.get('limit') || 60)));
       const offset = Math.max(0, Number(urlObj.searchParams.get('offset') || 0));
 
-      const data = getArticles({
+      const data = getArticles(reqUser.id, {
         filter,
         categoryId,
         feedId,
@@ -289,7 +511,7 @@ async function handleApi(req, res, urlObj) {
     // POST /api/articles/mark-all-read
     if (method === 'POST' && pathname === '/api/articles/mark-all-read') {
       const body = await readJsonBody(req);
-      const updated = markAllRead({
+      const updated = markAllRead(reqUser.id, {
         filter: body.filter,
         categoryId: body.categoryId,
         feedId: body.feedId,
@@ -297,7 +519,7 @@ async function handleApi(req, res, urlObj) {
       });
       return sendJson(res, 200, {
         updated,
-        sidebar: getSidebarData()
+        sidebar: getSidebarData(reqUser.id)
       });
     }
 
@@ -305,16 +527,16 @@ async function handleApi(req, res, urlObj) {
     const articleMatch = /^\/api\/articles\/(\d+)$/.exec(pathname);
     if (method === 'GET' && articleMatch) {
       const id = Number(articleMatch[1]);
-      const article = getArticleById(id);
+      const article = getArticleById(reqUser.id, id);
       if (!article) return sendJson(res, 404, { error: 'Article introuvable' });
       return sendJson(res, 200, { article });
     }
 
-    // PATCH /api/articles/:id (lu / non-lu, favori)
+    // PATCH /api/articles/:id
     if (method === 'PATCH' && articleMatch) {
       const id = Number(articleMatch[1]);
       const body = await readJsonBody(req);
-      const existing = getArticleById(id);
+      const existing = getArticleById(reqUser.id, id);
       if (!existing) return sendJson(res, 404, { error: 'Article introuvable' });
 
       const isRead = body.is_read !== undefined ? (body.is_read ? 1 : 0) : existing.is_read;
@@ -327,17 +549,17 @@ async function handleApi(req, res, urlObj) {
       );
 
       return sendJson(res, 200, {
-        article: getArticleById(id),
-        sidebar: getSidebarData()
+        article: getArticleById(reqUser.id, id),
+        sidebar: getSidebarData(reqUser.id)
       });
     }
 
-    // POST /api/articles/:id/extract (Mode "Article Complet" / Reader View)
+    // POST /api/articles/:id/extract
     const extractMatch = /^\/api\/articles\/(\d+)\/extract$/.exec(pathname);
     if (method === 'POST' && extractMatch) {
       const id = Number(extractMatch[1]);
       const body = await readJsonBody(req).catch(() => ({}));
-      const article = getArticleById(id);
+      const article = getArticleById(reqUser.id, id);
       if (!article) return sendJson(res, 404, { error: 'Article introuvable' });
 
       if (article.full_content_html && !body.force) {
@@ -367,12 +589,12 @@ async function handleApi(req, res, urlObj) {
       }
 
       return sendJson(res, 200, {
-        article: getArticleById(id),
+        article: getArticleById(reqUser.id, id),
         cached: false
       });
     }
 
-    // POST /api/feeds (Ajout d'un flux avec auto-découverte RSS)
+    // POST /api/feeds
     if (method === 'POST' && pathname === '/api/feeds') {
       const body = await readJsonBody(req);
       const rawUrl = (body.url || '').trim();
@@ -385,10 +607,10 @@ async function handleApi(req, res, urlObj) {
 
       let categoryId = body.categoryId ? Number(body.categoryId) : null;
       if (!categoryId && body.categoryName) {
-        const cat = getOrCreateCategory(body.categoryName);
+        const cat = getOrCreateCategory(reqUser.id, body.categoryName);
         categoryId = cat.id;
       } else if (!categoryId) {
-        const defaultCat = getOrCreateCategory('Général');
+        const defaultCat = getOrCreateCategory(reqUser.id, 'Général');
         categoryId = defaultCat.id;
       }
 
@@ -397,10 +619,9 @@ async function handleApi(req, res, urlObj) {
       const faviconUrl = getFaviconUrl(siteUrl);
       const autoFull = body.autoFullContent ? 1 : 0;
 
-      // Vérifier si le flux existe déjà
       const existing = db
-        .prepare(`SELECT * FROM feeds WHERE xml_url = ?`)
-        .get(discovered.feedUrl);
+        .prepare(`SELECT * FROM feeds WHERE user_id = ? AND xml_url = ?`)
+        .get(reqUser.id, discovered.feedUrl);
 
       let feedId;
       if (existing) {
@@ -408,16 +629,17 @@ async function handleApi(req, res, urlObj) {
         db.prepare(`
           UPDATE feeds
           SET category_id = ?, title = ?, auto_full_content = ?
-          WHERE id = ?
-        `).run(categoryId, title, autoFull, feedId);
+          WHERE id = ? AND user_id = ?
+        `).run(categoryId, title, autoFull, feedId, reqUser.id);
       } else {
         const insertRes = db
           .prepare(`
             INSERT INTO feeds (
-              category_id, title, xml_url, site_url, description, favicon_url, auto_full_content, etag, last_modified, last_fetched_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+              user_id, category_id, title, xml_url, site_url, description, favicon_url, auto_full_content, etag, last_modified, last_fetched_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
           `)
           .run(
+            reqUser.id,
             categoryId,
             title,
             discovered.feedUrl,
@@ -437,7 +659,7 @@ async function handleApi(req, res, urlObj) {
       return sendJson(res, 201, {
         feedId,
         inserted,
-        sidebar: getSidebarData()
+        sidebar: getSidebarData(reqUser.id)
       });
     }
 
@@ -446,12 +668,14 @@ async function handleApi(req, res, urlObj) {
     if (feedMatch && method === 'PATCH') {
       const id = Number(feedMatch[1]);
       const body = await readJsonBody(req);
-      const existing = db.prepare(`SELECT * FROM feeds WHERE id = ?`).get(id);
+      const existing = db
+        .prepare(`SELECT * FROM feeds WHERE id = ? AND user_id = ?`)
+        .get(id, reqUser.id);
       if (!existing) return sendJson(res, 404, { error: 'Flux introuvable' });
 
       let categoryId = existing.category_id;
       if (body.categoryName) {
-        categoryId = getOrCreateCategory(body.categoryName).id;
+        categoryId = getOrCreateCategory(reqUser.id, body.categoryName).id;
       } else if (body.categoryId !== undefined) {
         categoryId = body.categoryId ? Number(body.categoryId) : null;
       }
@@ -467,16 +691,16 @@ async function handleApi(req, res, urlObj) {
       db.prepare(`
         UPDATE feeds
         SET title = ?, category_id = ?, auto_full_content = ?
-        WHERE id = ?
-      `).run(title || existing.title, categoryId, autoFull, id);
+        WHERE id = ? AND user_id = ?
+      `).run(title || existing.title, categoryId, autoFull, id, reqUser.id);
 
-      return sendJson(res, 200, { sidebar: getSidebarData() });
+      return sendJson(res, 200, { sidebar: getSidebarData(reqUser.id) });
     }
 
     if (feedMatch && method === 'DELETE') {
       const id = Number(feedMatch[1]);
-      db.prepare(`DELETE FROM feeds WHERE id = ?`).run(id);
-      return sendJson(res, 200, { sidebar: getSidebarData() });
+      db.prepare(`DELETE FROM feeds WHERE id = ? AND user_id = ?`).run(id, reqUser.id);
+      return sendJson(res, 200, { sidebar: getSidebarData(reqUser.id) });
     }
 
     // POST /api/categories
@@ -485,13 +709,17 @@ async function handleApi(req, res, urlObj) {
       if (!body.name || !String(body.name).trim()) {
         return sendJson(res, 400, { error: 'Nom de catégorie requis' });
       }
-      const cat = getOrCreateCategory(body.name);
+      const cat = getOrCreateCategory(reqUser.id, body.name);
       if (body.color) {
-        db.prepare(`UPDATE categories SET color = ? WHERE id = ?`).run(body.color, cat.id);
+        db.prepare(`UPDATE categories SET color = ? WHERE id = ? AND user_id = ?`).run(
+          body.color,
+          cat.id,
+          reqUser.id
+        );
       }
       return sendJson(res, 201, {
         category: cat,
-        sidebar: getSidebarData()
+        sidebar: getSidebarData(reqUser.id)
       });
     }
 
@@ -499,8 +727,8 @@ async function handleApi(req, res, urlObj) {
     const catMatch = /^\/api\/categories\/(\d+)$/.exec(pathname);
     if (catMatch && method === 'DELETE') {
       const id = Number(catMatch[1]);
-      db.prepare(`DELETE FROM categories WHERE id = ?`).run(id);
-      return sendJson(res, 200, { sidebar: getSidebarData() });
+      db.prepare(`DELETE FROM categories WHERE id = ? AND user_id = ?`).run(id, reqUser.id);
+      return sendJson(res, 200, { sidebar: getSidebarData(reqUser.id) });
     }
 
     // POST /api/opml/import
@@ -514,19 +742,21 @@ async function handleApi(req, res, urlObj) {
       }
 
       if (body.replaceExisting) {
-        db.exec(`DELETE FROM feeds; DELETE FROM categories;`);
+        db.prepare(`DELETE FROM feeds WHERE user_id = ?`).run(reqUser.id);
+        db.prepare(`DELETE FROM categories WHERE user_id = ?`).run(reqUser.id);
       }
 
       const insertFeed = db.prepare(`
-        INSERT OR IGNORE INTO feeds (category_id, title, xml_url, site_url, description, favicon_url)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT OR IGNORE INTO feeds (user_id, category_id, title, xml_url, site_url, description, favicon_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
 
       let importedCount = 0;
       for (const item of parsedFeeds) {
-        const cat = getOrCreateCategory(item.category || 'Général');
+        const cat = getOrCreateCategory(reqUser.id, item.category || 'Général');
         const siteUrl = item.siteUrl || item.xmlUrl;
         const resInsert = insertFeed.run(
+          reqUser.id,
           cat.id,
           item.title || item.xmlUrl,
           item.xmlUrl,
@@ -537,21 +767,24 @@ async function handleApi(req, res, urlObj) {
         if (resInsert.changes > 0) importedCount++;
       }
 
-      // Lancer la synchronisation en arrière-plan pour récupérer tous les articles immédiatement
-      syncFeeds().catch((err) => console.error('Erreur synchro post-OPML:', err));
+      syncFeeds({ userId: reqUser.id }).catch((err) => console.error('Erreur synchro post-OPML:', err));
 
       return sendJson(res, 200, {
         totalFound: parsedFeeds.length,
         importedCount,
-        sidebar: getSidebarData(),
+        sidebar: getSidebarData(reqUser.id),
         syncState
       });
     }
 
     // GET /api/opml/export
     if (method === 'GET' && pathname === '/api/opml/export') {
-      const categories = db.prepare(`SELECT * FROM categories ORDER BY position ASC, name ASC`).all();
-      const feeds = db.prepare(`SELECT * FROM feeds ORDER BY title ASC`).all();
+      const categories = db
+        .prepare(`SELECT * FROM categories WHERE user_id = ? ORDER BY position ASC, name ASC`)
+        .all(reqUser.id);
+      const feeds = db
+        .prepare(`SELECT * FROM feeds WHERE user_id = ? ORDER BY title ASC`)
+        .all(reqUser.id);
       const xml = generateOpml(categories, feeds);
       res.writeHead(200, {
         'Content-Type': 'text/x-opml; charset=utf-8',
@@ -563,8 +796,25 @@ async function handleApi(req, res, urlObj) {
     // PATCH /api/settings
     if (method === 'PATCH' && pathname === '/api/settings') {
       const body = await readJsonBody(req);
-      const settings = updateSettings(body);
+      const settings = updateSettings(reqUser.id, body);
       return sendJson(res, 200, { settings });
+    }
+
+    // GET ou POST /api/ai/briefing (Synthèse IA des articles les plus importants du jour)
+    if ((method === 'GET' || method === 'POST') && pathname === '/api/ai/briefing') {
+      const recentArticles = getRecentArticlesForBriefing(reqUser.id);
+      const settings = getSettings(reqUser.id);
+      const briefing = await generateDailyBriefing(recentArticles, settings);
+      return sendJson(res, 200, { briefing });
+    }
+
+    // POST /api/ai/search (Recherche sémantique & Question-Réponse IA, ex: CVE, thèmes...)
+    if (method === 'POST' && pathname === '/api/ai/search') {
+      const body = await readJsonBody(req);
+      const allArticles = getAllArticlesForSearch(reqUser.id, 500);
+      const settings = getSettings(reqUser.id);
+      const searchResult = await performAiSearch(body.query, allArticles, settings);
+      return sendJson(res, 200, searchResult);
     }
 
     return sendJson(res, 404, { error: 'Route API introuvable' });
@@ -575,7 +825,7 @@ async function handleApi(req, res, urlObj) {
 }
 
 /**
- * Serveur de fichiers statiques + routeur API
+ * Serveur HTTP
  */
 const server = http.createServer((req, res) => {
   const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -586,7 +836,7 @@ const server = http.createServer((req, res) => {
   }
 
   let safePath = path.normalize(decodeURIComponent(urlObj.pathname)).replace(/^(\.\.[/\\])+/, '');
-  if (safePath === '/' || safePath === '\\') {
+  if (safePath === '/' || safePath === '\\' || safePath === '/login') {
     safePath = '/index.html';
   }
 
@@ -599,7 +849,6 @@ const server = http.createServer((req, res) => {
 
   fs.stat(filePath, (err, stat) => {
     if (err || !stat.isFile()) {
-      // Fallback SPA vers index.html
       const indexFile = path.join(PUBLIC_DIR, 'index.html');
       fs.readFile(indexFile, (indexErr, content) => {
         if (indexErr) {
@@ -622,25 +871,23 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`\n✨ Flux RSS démarré sur http://localhost:${PORT}`);
-  // Si la base ne contient encore aucun article, lancer une première synchronisation en tâche de fond
   const count = db.prepare(`SELECT COUNT(*) AS cnt FROM articles`).get().cnt;
-  if (count === 0) {
-    console.log('🔄 Première synchronisation des flux en cours...');
+  const unfetched = db.prepare(`SELECT COUNT(*) AS cnt FROM feeds WHERE last_fetched_at IS NULL`).get().cnt;
+  if (count === 0 || unfetched > 0) {
+    console.log('🔄 Synchronisation des flux en cours...');
     syncFeeds().catch((err) => console.error('Erreur synchro initiale:', err));
   }
 });
 
-// Planificateur de synchronisation périodique (vérifie toutes les minutes si l'intervalle est atteint)
+// Planificateur de synchronisation périodique (toutes les 15 minutes par défaut)
 setInterval(() => {
   if (syncState.isSyncing) return;
-  const settings = getSettings();
-  const intervalMin = Math.max(5, parseInt(settings.refreshIntervalMin || '15', 10));
   if (!syncState.lastSyncAt) {
     syncFeeds().catch(() => {});
     return;
   }
   const elapsedMs = Date.now() - new Date(syncState.lastSyncAt).getTime();
-  if (elapsedMs >= intervalMin * 60 * 1000) {
+  if (elapsedMs >= 15 * 60 * 1000) {
     syncFeeds().catch(() => {});
   }
 }, 60 * 1000);

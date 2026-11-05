@@ -1,6 +1,6 @@
 /**
  * Couche de persistance SQLite (via le module natif node:sqlite)
- * Gère les catégories, flux, articles, favoris, états de lecture et préférences utilisateur.
+ * Gère les utilisateurs, sessions, invitations, catégories, flux, articles et préférences par utilisateur.
  */
 
 const path = require('node:path');
@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const { DatabaseSync } = require('node:sqlite');
 const { DEFAULT_CATEGORIES, DEFAULT_FEEDS } = require('./defaultFeeds');
 const { getFaviconUrl } = require('./extractor');
+const { hashPassword, verifyPassword, generateToken, SESSION_DURATION_MS } = require('./auth');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 if (!fs.existsSync(DATA_DIR)) {
@@ -17,67 +18,198 @@ if (!fs.existsSync(DATA_DIR)) {
 const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'fluxrss.db');
 const db = new DatabaseSync(DB_PATH);
 
-// Optimisations SQLite pour performances et intégrité référentielle
 db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA synchronous = NORMAL;
   PRAGMA foreign_keys = ON;
 `);
 
+// Tables Utilisateurs, Sessions & Invitations
 db.exec(`
-  CREATE TABLE IF NOT EXISTS categories (
+  CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    color TEXT DEFAULT '#3b82f6',
-    position INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS feeds (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
-    title TEXT NOT NULL,
-    xml_url TEXT NOT NULL UNIQUE,
-    site_url TEXT DEFAULT '',
-    description TEXT DEFAULT '',
-    favicon_url TEXT DEFAULT '',
-    auto_full_content INTEGER DEFAULT 0,
-    etag TEXT DEFAULT NULL,
-    last_modified TEXT DEFAULT NULL,
-    last_fetched_at TEXT DEFAULT NULL,
-    last_error TEXT DEFAULT NULL,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS articles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    feed_id INTEGER NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
-    guid TEXT NOT NULL,
-    title TEXT NOT NULL,
-    url TEXT DEFAULT '',
-    author TEXT DEFAULT '',
-    summary TEXT DEFAULT '',
-    content_html TEXT DEFAULT '',
-    full_content_html TEXT DEFAULT NULL,
-    image_url TEXT DEFAULT NULL,
-    published_at TEXT NOT NULL,
-    is_read INTEGER DEFAULT 0,
-    is_starred INTEGER DEFAULT 0,
-    reading_time_min INTEGER DEFAULT 1,
+    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    display_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
     created_at TEXT DEFAULT (datetime('now')),
-    UNIQUE(feed_id, guid)
+    last_login_at TEXT DEFAULT NULL
   );
 
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
+  CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
   );
 
-  CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_articles_feed ON articles(feed_id, published_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_articles_read ON articles(is_read, published_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_articles_starred ON articles(is_starred, published_at DESC);
+  CREATE TABLE IF NOT EXISTS invitations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token TEXT NOT NULL UNIQUE,
+    label TEXT DEFAULT '',
+    suggested_username TEXT DEFAULT '',
+    role TEXT NOT NULL DEFAULT 'user',
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    used_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    used_at TEXT DEFAULT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS user_settings (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (user_id, key)
+  );
 `);
+
+/**
+ * Migration douce des tables categories & feeds pour supporter le multi-utilisateurs (user_id)
+ */
+function ensureSchemaAndMigrations() {
+  // 1. S'assurer qu'il existe au moins un administrateur (id = 1)
+  const userCount = db.prepare(`SELECT COUNT(*) AS cnt FROM users`).get().cnt;
+  if (userCount === 0) {
+    const adminUsername = (process.env.ADMIN_USER || 'admin').trim();
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin1234';
+    db.prepare(`
+      INSERT INTO users (username, display_name, password_hash, role)
+      VALUES (?, ?, ?, 'admin')
+    `).run(adminUsername, 'Administrateur', hashPassword(adminPassword));
+  }
+
+  // 2. Vérifier si la table categories existe déjà sans user_id
+  const catColumns = db.prepare(`PRAGMA table_info(categories)`).all();
+  const hasCategoriesTable = catColumns.length > 0;
+  const catHasUserId = catColumns.some((c) => c.name === 'user_id');
+
+  if (hasCategoriesTable && !catHasUserId) {
+    db.exec(`PRAGMA foreign_keys = OFF;`);
+    db.exec(`
+      CREATE TABLE categories_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL DEFAULT 1 REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL COLLATE NOCASE,
+        color TEXT DEFAULT '#3b82f6',
+        position INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(user_id, name)
+      );
+      INSERT INTO categories_new (id, user_id, name, color, position, created_at)
+      SELECT id, 1, name, color, position, created_at FROM categories;
+      DROP TABLE categories;
+      ALTER TABLE categories_new RENAME TO categories;
+    `);
+    db.exec(`PRAGMA foreign_keys = ON;`);
+  } else if (!hasCategoriesTable) {
+    db.exec(`
+      CREATE TABLE categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL DEFAULT 1 REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL COLLATE NOCASE,
+        color TEXT DEFAULT '#3b82f6',
+        position INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(user_id, name)
+      );
+    `);
+  }
+
+  // 3. Vérifier si la table feeds existe déjà sans user_id
+  const feedColumns = db.prepare(`PRAGMA table_info(feeds)`).all();
+  const hasFeedsTable = feedColumns.length > 0;
+  const feedHasUserId = feedColumns.some((c) => c.name === 'user_id');
+
+  if (hasFeedsTable && !feedHasUserId) {
+    db.exec(`PRAGMA foreign_keys = OFF;`);
+    db.exec(`
+      CREATE TABLE feeds_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL DEFAULT 1 REFERENCES users(id) ON DELETE CASCADE,
+        category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        xml_url TEXT NOT NULL,
+        site_url TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        favicon_url TEXT DEFAULT '',
+        auto_full_content INTEGER DEFAULT 0,
+        etag TEXT DEFAULT NULL,
+        last_modified TEXT DEFAULT NULL,
+        last_fetched_at TEXT DEFAULT NULL,
+        last_error TEXT DEFAULT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(user_id, xml_url)
+      );
+      INSERT INTO feeds_new (
+        id, user_id, category_id, title, xml_url, site_url, description, favicon_url,
+        auto_full_content, etag, last_modified, last_fetched_at, last_error, created_at
+      )
+      SELECT
+        id, 1, category_id, title, xml_url, site_url, description, favicon_url,
+        auto_full_content, etag, last_modified, last_fetched_at, last_error, created_at
+      FROM feeds;
+      DROP TABLE feeds;
+      ALTER TABLE feeds_new RENAME TO feeds;
+    `);
+    db.exec(`PRAGMA foreign_keys = ON;`);
+  } else if (!hasFeedsTable) {
+    db.exec(`
+      CREATE TABLE feeds (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL DEFAULT 1 REFERENCES users(id) ON DELETE CASCADE,
+        category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        xml_url TEXT NOT NULL,
+        site_url TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        favicon_url TEXT DEFAULT '',
+        auto_full_content INTEGER DEFAULT 0,
+        etag TEXT DEFAULT NULL,
+        last_modified TEXT DEFAULT NULL,
+        last_fetched_at TEXT DEFAULT NULL,
+        last_error TEXT DEFAULT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(user_id, xml_url)
+      );
+    `);
+  }
+
+  // 4. Table articles & index
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS articles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      feed_id INTEGER NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
+      guid TEXT NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT DEFAULT '',
+      author TEXT DEFAULT '',
+      summary TEXT DEFAULT '',
+      content_html TEXT DEFAULT '',
+      full_content_html TEXT DEFAULT NULL,
+      image_url TEXT DEFAULT NULL,
+      published_at TEXT NOT NULL,
+      is_read INTEGER DEFAULT 0,
+      is_starred INTEGER DEFAULT 0,
+      reading_time_min INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(feed_id, guid)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id);
+    CREATE INDEX IF NOT EXISTS idx_feeds_user ON feeds(user_id);
+    CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_articles_feed ON articles(feed_id, published_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_articles_read ON articles(is_read, published_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_articles_starred ON articles(is_starred, published_at DESC);
+  `);
+
+  // 5. Initialiser les flux par défaut pour l'administrateur initial si la base est vierge
+  const adminUser = db.prepare(`SELECT id FROM users ORDER BY id ASC LIMIT 1`).get();
+  if (adminUser) {
+    ensureUserSettingsAndFeeds(adminUser.id, { seedDefaultFeeds: true });
+  }
+}
 
 const CATEGORY_COLORS = [
   '#3b82f6',
@@ -90,48 +222,51 @@ const CATEGORY_COLORS = [
   '#ef4444'
 ];
 
-/**
- * Initialise les préférences et les flux par défaut lors du tout premier lancement
- */
-function ensureInitialized() {
+function ensureUserSettingsAndFeeds(userId, { seedDefaultFeeds = false } = {}) {
   const defaultSettings = {
     theme: 'light',
-    viewMode: 'editorial', // 'editorial' (style 01net), 'compact', 'cards'
+    viewMode: 'editorial',
     refreshIntervalMin: '15',
-    autoMarkReadOnScroll: 'false',
-    readerFontFamily: 'sans', // 'sans', 'serif', 'mono'
-    readerFontSize: 'medium', // 'small', 'medium', 'large', 'xlarge'
-    readerAutoFullContent: 'false',
-    showReadArticles: 'true',
+    readerFontFamily: 'sans',
+    readerFontSize: 'medium',
     seededDefaults: 'false'
   };
 
-  const insertSetting = db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`);
+  const insertSetting = db.prepare(
+    `INSERT OR IGNORE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)`
+  );
   for (const [k, v] of Object.entries(defaultSettings)) {
-    insertSetting.run(k, v);
+    insertSetting.run(Number(userId), k, v);
   }
 
-  const seeded = db.prepare(`SELECT value FROM settings WHERE key = 'seededDefaults'`).get();
-  const feedCount = db.prepare(`SELECT COUNT(*) AS cnt FROM feeds`).get().cnt;
+  const seeded = db
+    .prepare(`SELECT value FROM user_settings WHERE user_id = ? AND key = 'seededDefaults'`)
+    .get(Number(userId));
+  const feedCount = db
+    .prepare(`SELECT COUNT(*) AS cnt FROM feeds WHERE user_id = ?`)
+    .get(Number(userId)).cnt;
 
-  if ((!seeded || seeded.value === 'false') && feedCount === 0) {
+  if (seedDefaultFeeds && (!seeded || seeded.value === 'false') && feedCount === 0) {
     const insertCat = db.prepare(
-      `INSERT OR IGNORE INTO categories (name, color, position) VALUES (?, ?, ?)`
+      `INSERT OR IGNORE INTO categories (user_id, name, color, position) VALUES (?, ?, ?, ?)`
     );
     for (const c of DEFAULT_CATEGORIES) {
-      insertCat.run(c.name, c.color, c.position);
+      insertCat.run(Number(userId), c.name, c.color, c.position);
     }
 
-    const getCat = db.prepare(`SELECT id FROM categories WHERE name = ? COLLATE NOCASE`);
+    const getCat = db.prepare(
+      `SELECT id FROM categories WHERE user_id = ? AND name = ? COLLATE NOCASE`
+    );
     const insertFeed = db.prepare(`
-      INSERT OR IGNORE INTO feeds (category_id, title, xml_url, site_url, description, favicon_url)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT OR IGNORE INTO feeds (user_id, category_id, title, xml_url, site_url, description, favicon_url)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const f of DEFAULT_FEEDS) {
-      const catRow = getCat.get(f.category);
+      const catRow = getCat.get(Number(userId), f.category);
       const catId = catRow ? catRow.id : null;
       insertFeed.run(
+        Number(userId),
         catId,
         f.title,
         f.xmlUrl,
@@ -140,38 +275,276 @@ function ensureInitialized() {
         getFaviconUrl(f.siteUrl || f.xmlUrl)
       );
     }
-
-    db.prepare(`UPDATE settings SET value = 'true' WHERE key = 'seededDefaults'`).run();
   }
+
+  db.prepare(
+    `UPDATE user_settings SET value = 'true' WHERE user_id = ? AND key = 'seededDefaults'`
+  ).run(Number(userId));
 }
 
-ensureInitialized();
+ensureSchemaAndMigrations();
 
-/**
- * Récupère ou crée une catégorie par son nom
- */
-function getOrCreateCategory(name) {
+/* ==========================================================================
+   AUTHENTIFICATION, UTILISATEURS & INVITATIONS
+   ========================================================================== */
+
+function authenticateUser(username, password) {
+  const cleanUser = (username || '').trim();
+  if (!cleanUser || !password) return null;
+
+  const user = db
+    .prepare(`SELECT * FROM users WHERE username = ? COLLATE NOCASE`)
+    .get(cleanUser);
+  if (!user) return null;
+  if (!verifyPassword(password, user.password_hash)) return null;
+
+  db.prepare(`UPDATE users SET last_login_at = datetime('now') WHERE id = ?`).run(user.id);
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: user.display_name,
+    role: user.role
+  };
+}
+
+function createSession(userId) {
+  const token = generateToken(32);
+  const expiresAt = new Date(Date.now() + SESSION_DURATION_MS).toISOString();
+  db.prepare(`INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)`).run(
+    token,
+    Number(userId),
+    expiresAt
+  );
+  return { token, expiresAt };
+}
+
+function getUserBySessionToken(token) {
+  if (!token) return null;
+  const row = db
+    .prepare(`
+      SELECT
+        s.token,
+        s.expires_at,
+        u.id,
+        u.username,
+        u.display_name,
+        u.role
+      FROM sessions s
+      JOIN users u ON u.id = s.user_id
+      WHERE s.token = ?
+    `)
+    .get(String(token));
+
+  if (!row) return null;
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    db.prepare(`DELETE FROM sessions WHERE token = ?`).run(String(token));
+    return null;
+  }
+
+  return {
+    id: row.id,
+    username: row.username,
+    displayName: row.display_name,
+    role: row.role
+  };
+}
+
+function deleteSession(token) {
+  if (!token) return;
+  db.prepare(`DELETE FROM sessions WHERE token = ?`).run(String(token));
+}
+
+function createUserAccount({ username, displayName, password, role = 'user', seedFeeds = true }) {
+  const cleanUsername = (username || '').trim();
+  if (!/^[a-zA-Z0-9_.-]{3,32}$/.test(cleanUsername)) {
+    throw new Error(
+      "L'identifiant doit contenir entre 3 et 32 caractères (lettres, chiffres, points, tirets)."
+    );
+  }
+  if (!password || String(password).length < 6) {
+    throw new Error('Le mot de passe doit contenir au moins 6 caractères.');
+  }
+
+  const existing = db
+    .prepare(`SELECT id FROM users WHERE username = ? COLLATE NOCASE`)
+    .get(cleanUsername);
+  if (existing) {
+    throw new Error('Cet identifiant est déjà utilisé.');
+  }
+
+  const finalRole = role === 'admin' ? 'admin' : 'user';
+  const finalDisplay = (displayName || cleanUsername).trim();
+
+  const res = db
+    .prepare(`
+      INSERT INTO users (username, display_name, password_hash, role)
+      VALUES (?, ?, ?, ?)
+    `)
+    .run(cleanUsername, finalDisplay, hashPassword(password), finalRole);
+
+  const userId = Number(res.lastInsertRowid);
+  ensureUserSettingsAndFeeds(userId, { seedDefaultFeeds: Boolean(seedFeeds) });
+
+  return {
+    id: userId,
+    username: cleanUsername,
+    displayName: finalDisplay,
+    role: finalRole
+  };
+}
+
+function updateUserPassword(userId, newPassword) {
+  if (!newPassword || String(newPassword).length < 6) {
+    throw new Error('Le mot de passe doit contenir au moins 6 caractères.');
+  }
+  db.prepare(`UPDATE users SET password_hash = ? WHERE id = ?`).run(
+    hashPassword(newPassword),
+    Number(userId)
+  );
+}
+
+function listUsers() {
+  return db
+    .prepare(`
+      SELECT
+        u.id,
+        u.username,
+        u.display_name,
+        u.role,
+        u.created_at,
+        u.last_login_at,
+        COUNT(f.id) AS feed_count
+      FROM users u
+      LEFT JOIN feeds f ON f.user_id = u.id
+      GROUP BY u.id
+      ORDER BY u.id ASC
+    `)
+    .all();
+}
+
+function deleteUserAccount(targetUserId, requestingAdminId) {
+  if (Number(targetUserId) === Number(requestingAdminId)) {
+    throw new Error('Vous ne pouvez pas supprimer votre propre compte administrateur.');
+  }
+  db.prepare(`DELETE FROM users WHERE id = ?`).run(Number(targetUserId));
+}
+
+function createInvitation({ label = '', suggestedUsername = '', role = 'user', expiresInDays = 7, createdBy }) {
+  const token = generateToken(20);
+  const days = Math.max(1, Math.min(90, Number(expiresInDays) || 7));
+  const expiresAt = new Date(Date.now() + days * 86400 * 1000).toISOString();
+  const finalRole = role === 'admin' ? 'admin' : 'user';
+
+  const res = db
+    .prepare(`
+      INSERT INTO invitations (token, label, suggested_username, role, created_by, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `)
+    .run(
+      token,
+      (label || '').trim(),
+      (suggestedUsername || '').trim(),
+      finalRole,
+      Number(createdBy),
+      expiresAt
+    );
+
+  return db.prepare(`SELECT * FROM invitations WHERE id = ?`).get(Number(res.lastInsertRowid));
+}
+
+function getInvitationByToken(token) {
+  if (!token) return null;
+  const inv = db.prepare(`SELECT * FROM invitations WHERE token = ?`).get(String(token).trim());
+  if (!inv) return null;
+  const isExpired = new Date(inv.expires_at).getTime() < Date.now();
+  const isUsed = Boolean(inv.used_at);
+  return {
+    ...inv,
+    isExpired,
+    isUsed,
+    isValid: !isExpired && !isUsed
+  };
+}
+
+function acceptInvitation({ token, username, displayName, password, seedFeeds = true }) {
+  const inv = getInvitationByToken(token);
+  if (!inv) {
+    throw new Error("Ce lien d'invitation est introuvable.");
+  }
+  if (inv.isUsed) {
+    throw new Error("Ce lien d'invitation a déjà été utilisé.");
+  }
+  if (inv.isExpired) {
+    throw new Error("Ce lien d'invitation a expiré.");
+  }
+
+  const finalUsername = (username || inv.suggested_username || '').trim();
+  const user = createUserAccount({
+    username: finalUsername,
+    displayName: displayName || inv.label || finalUsername,
+    password,
+    role: inv.role,
+    seedFeeds
+  });
+
+  db.prepare(`
+    UPDATE invitations
+    SET used_by = ?, used_at = datetime('now')
+    WHERE id = ?
+  `).run(user.id, inv.id);
+
+  return user;
+}
+
+function listInvitations() {
+  return db
+    .prepare(`
+      SELECT
+        i.*,
+        u1.username AS created_by_username,
+        u2.username AS used_by_username
+      FROM invitations i
+      LEFT JOIN users u1 ON u1.id = i.created_by
+      LEFT JOIN users u2 ON u2.id = i.used_by
+      ORDER BY i.created_at DESC
+    `)
+    .all();
+}
+
+function deleteInvitation(id) {
+  db.prepare(`DELETE FROM invitations WHERE id = ?`).run(Number(id));
+}
+
+/* ==========================================================================
+   DONNÉES RSS SCOPÉES PAR UTILISATEUR (userId)
+   ========================================================================== */
+
+function getOrCreateCategory(userId, name) {
   const cleanName = (name || 'Général').trim() || 'Général';
   const existing = db
-    .prepare(`SELECT id, name, color, position FROM categories WHERE name = ? COLLATE NOCASE`)
-    .get(cleanName);
+    .prepare(
+      `SELECT id, name, color, position FROM categories WHERE user_id = ? AND name = ? COLLATE NOCASE`
+    )
+    .get(Number(userId), cleanName);
   if (existing) return existing;
 
-  const count = db.prepare(`SELECT COUNT(*) AS cnt FROM categories`).get().cnt;
+  const count = db
+    .prepare(`SELECT COUNT(*) AS cnt FROM categories WHERE user_id = ?`)
+    .get(Number(userId)).cnt;
   const color = CATEGORY_COLORS[count % CATEGORY_COLORS.length];
   const res = db
-    .prepare(`INSERT INTO categories (name, color, position) VALUES (?, ?, ?)`)
-    .run(cleanName, color, count + 1);
+    .prepare(`INSERT INTO categories (user_id, name, color, position) VALUES (?, ?, ?, ?)`)
+    .run(Number(userId), cleanName, color, count + 1);
   return { id: Number(res.lastInsertRowid), name: cleanName, color, position: count + 1 };
 }
 
-/**
- * Retourne l'état complet de la barre latérale (catégories, flux, compteurs de non-lus/favoris/aujourd'hui)
- */
-function getSidebarData() {
+function getSidebarData(userId) {
+  const uid = Number(userId);
   const categories = db
-    .prepare(`SELECT id, name, color, position FROM categories ORDER BY position ASC, name ASC`)
-    .all();
+    .prepare(
+      `SELECT id, name, color, position FROM categories WHERE user_id = ? ORDER BY position ASC, name ASC`
+    )
+    .all(uid);
 
   const feeds = db
     .prepare(`
@@ -184,10 +557,11 @@ function getSidebarData() {
       FROM feeds f
       LEFT JOIN categories c ON c.id = f.category_id
       LEFT JOIN articles a ON a.feed_id = f.id
+      WHERE f.user_id = ?
       GROUP BY f.id
       ORDER BY f.title COLLATE NOCASE ASC
     `)
-    .all();
+    .all(uid);
 
   const todayIsoStart = new Date();
   todayIsoStart.setHours(0, 0, 0, 0);
@@ -195,14 +569,16 @@ function getSidebarData() {
   const counts = db
     .prepare(`
       SELECT
-        COUNT(*) AS all_count,
-        COALESCE(SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END), 0) AS unread_count,
-        COALESCE(SUM(CASE WHEN is_starred = 1 THEN 1 ELSE 0 END), 0) AS starred_count,
-        COALESCE(SUM(CASE WHEN published_at >= ? THEN 1 ELSE 0 END), 0) AS today_count,
-        COALESCE(SUM(CASE WHEN published_at >= ? AND is_read = 0 THEN 1 ELSE 0 END), 0) AS today_unread_count
-      FROM articles
+        COUNT(a.id) AS all_count,
+        COALESCE(SUM(CASE WHEN a.is_read = 0 THEN 1 ELSE 0 END), 0) AS unread_count,
+        COALESCE(SUM(CASE WHEN a.is_starred = 1 THEN 1 ELSE 0 END), 0) AS starred_count,
+        COALESCE(SUM(CASE WHEN a.published_at >= ? THEN 1 ELSE 0 END), 0) AS today_count,
+        COALESCE(SUM(CASE WHEN a.published_at >= ? AND a.is_read = 0 THEN 1 ELSE 0 END), 0) AS today_unread_count
+      FROM articles a
+      JOIN feeds f ON f.id = a.feed_id
+      WHERE f.user_id = ?
     `)
-    .get(todayIsoStart.toISOString(), todayIsoStart.toISOString());
+    .get(todayIsoStart.toISOString(), todayIsoStart.toISOString(), uid);
 
   return {
     categories,
@@ -217,12 +593,9 @@ function getSidebarData() {
   };
 }
 
-/**
- * Liste les articles avec filtres riches (filter, categoryId, feedId, search, unreadOnly, limit, offset)
- */
-function getArticles(params = {}) {
+function getArticles(userId, params = {}) {
   const {
-    filter = 'all', // 'all', 'unread', 'today', 'starred'
+    filter = 'all',
     categoryId = null,
     feedId = null,
     search = '',
@@ -231,8 +604,8 @@ function getArticles(params = {}) {
     offset = 0
   } = params;
 
-  const conditions = [];
-  const bindParams = [];
+  const conditions = ['f.user_id = ?'];
+  const bindParams = [Number(userId)];
 
   if (filter === 'unread' || unreadOnly) {
     conditions.push('a.is_read = 0');
@@ -259,7 +632,7 @@ function getArticles(params = {}) {
     bindParams.push(q, q, q, q);
   }
 
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
   const totalRow = db
     .prepare(`
@@ -308,10 +681,7 @@ function getArticles(params = {}) {
   };
 }
 
-/**
- * Récupère un article complet par son ID (avec content_html et full_content_html)
- */
-function getArticleById(id) {
+function getArticleById(userId, id) {
   return db
     .prepare(`
       SELECT
@@ -327,14 +697,11 @@ function getArticleById(id) {
       FROM articles a
       JOIN feeds f ON f.id = a.feed_id
       LEFT JOIN categories c ON c.id = f.category_id
-      WHERE a.id = ?
+      WHERE a.id = ? AND f.user_id = ?
     `)
-    .get(Number(id));
+    .get(Number(id), Number(userId));
 }
 
-/**
- * Insère ou met à jour les articles d'un flux lors d'une synchronisation
- */
 function upsertArticlesForFeed(feedId, items) {
   if (!Array.isArray(items) || items.length === 0) return 0;
 
@@ -351,9 +718,8 @@ function upsertArticlesForFeed(feedId, items) {
   `);
 
   let insertedCount = 0;
-
-  // Insérer du plus ancien au plus récent pour un ordre d'ID cohérent
   const sorted = [...items].reverse();
+
   for (const item of sorted) {
     const guid = (item.guid || item.url || item.title || '').trim();
     if (!guid) continue;
@@ -381,26 +747,26 @@ function upsertArticlesForFeed(feedId, items) {
       );
       insertedCount++;
     } catch {
-      // Ignorer les doublons concurrents
+      // ignore duplicate
     }
   }
 
   return insertedCount;
 }
 
-/**
- * Marque des articles comme lus en lot (global, catégorie, flux ou liste d'IDs)
- */
-function markAllRead({ filter, categoryId, feedId, beforeDate } = {}) {
-  const conditions = ['is_read = 0'];
-  const params = [];
+function markAllRead(userId, { filter, categoryId, feedId, beforeDate } = {}) {
+  const conditions = [
+    'is_read = 0',
+    'feed_id IN (SELECT id FROM feeds WHERE user_id = ?)'
+  ];
+  const params = [Number(userId)];
 
   if (feedId) {
     conditions.push('feed_id = ?');
     params.push(Number(feedId));
   } else if (categoryId) {
-    conditions.push('feed_id IN (SELECT id FROM feeds WHERE category_id = ?)');
-    params.push(Number(categoryId));
+    conditions.push('feed_id IN (SELECT id FROM feeds WHERE user_id = ? AND category_id = ?)');
+    params.push(Number(userId), Number(categoryId));
   }
 
   if (filter === 'today') {
@@ -421,8 +787,11 @@ function markAllRead({ filter, categoryId, feedId, beforeDate } = {}) {
   return res.changes;
 }
 
-function getSettings() {
-  const rows = db.prepare(`SELECT key, value FROM settings`).all();
+function getSettings(userId) {
+  ensureUserSettingsAndFeeds(userId, { seedDefaultFeeds: false });
+  const rows = db
+    .prepare(`SELECT key, value FROM user_settings WHERE user_id = ?`)
+    .all(Number(userId));
   const obj = {};
   for (const r of rows) {
     obj[r.key] = r.value;
@@ -430,20 +799,124 @@ function getSettings() {
   return obj;
 }
 
-function updateSettings(updates = {}) {
+function updateSettings(userId, updates = {}) {
+  ensureUserSettingsAndFeeds(userId, { seedDefaultFeeds: false });
   const stmt = db.prepare(`
-    INSERT INTO settings (key, value) VALUES (?, ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)
+    ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value
   `);
   for (const [k, v] of Object.entries(updates)) {
-    stmt.run(String(k), String(v));
+    stmt.run(Number(userId), String(k), String(v));
   }
-  return getSettings();
+  return getSettings(userId);
+}
+
+/**
+ * Récupère les articles récents (dernières 36h, ou fallback sur les 40 plus récents) pour la Synthèse IA du jour
+ */
+function getRecentArticlesForBriefing(userId) {
+  const sinceIso = new Date(Date.now() - 36 * 3600 * 1000).toISOString();
+  let rows = db
+    .prepare(`
+      SELECT
+        a.*,
+        f.title AS feed_title,
+        f.favicon_url AS feed_favicon_url,
+        c.name AS category_name
+      FROM articles a
+      JOIN feeds f ON f.id = a.feed_id
+      LEFT JOIN categories c ON c.id = f.category_id
+      WHERE f.user_id = ? AND a.published_at >= ?
+      ORDER BY a.published_at DESC
+      LIMIT 80
+    `)
+    .all(Number(userId), sinceIso);
+
+  if (rows.length < 5) {
+    rows = db
+      .prepare(`
+        SELECT
+          a.*,
+          f.title AS feed_title,
+          f.favicon_url AS feed_favicon_url,
+          c.name AS category_name
+        FROM articles a
+        JOIN feeds f ON f.id = a.feed_id
+        LEFT JOIN categories c ON c.id = f.category_id
+        WHERE f.user_id = ?
+        ORDER BY a.published_at DESC
+        LIMIT 40
+      `)
+      .all(Number(userId));
+  }
+
+  return rows;
+}
+
+/**
+ * Récupère l'ensemble des articles de l'utilisateur pour la Recherche Sémantique IA
+ */
+function getAllArticlesForSearch(userId, limit = 500) {
+  return db
+    .prepare(`
+      SELECT
+        a.*,
+        f.title AS feed_title,
+        f.favicon_url AS feed_favicon_url,
+        c.name AS category_name
+      FROM articles a
+      JOIN feeds f ON f.id = a.feed_id
+      LEFT JOIN categories c ON c.id = f.category_id
+      WHERE f.user_id = ?
+      ORDER BY a.published_at DESC
+      LIMIT ?
+    `)
+    .all(Number(userId), Number(limit));
+}
+
+// S'assurer que le flux CERT-FR (CVE) est bien présent chez l'admin s'il utilise les flux par défaut
+try {
+  const admin = db.prepare(`SELECT id FROM users ORDER BY id ASC LIMIT 1`).get();
+  if (admin) {
+    const hasCert = db
+      .prepare(`SELECT id FROM feeds WHERE user_id = ? AND xml_url LIKE '%cert.ssi.gouv.fr%'`)
+      .get(admin.id);
+    if (!hasCert) {
+      const cat = getOrCreateCategory(admin.id, 'Cybersécurité & CVE');
+      db.prepare(`
+        INSERT OR IGNORE INTO feeds (user_id, category_id, title, xml_url, site_url, description, favicon_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        admin.id,
+        cat.id,
+        'CERT-FR (ANSSI — Alertes & Avis CVE)',
+        'https://www.cert.ssi.gouv.fr/feed/',
+        'https://www.cert.ssi.gouv.fr',
+        'Avis de sécurité officiels, vulnérabilités CVE et alertes du CERT-FR (ANSSI)',
+        getFaviconUrl('https://www.cert.ssi.gouv.fr')
+      );
+    }
+  }
+} catch {
+  // ignore
 }
 
 module.exports = {
   db,
   DB_PATH,
+  authenticateUser,
+  createSession,
+  getUserBySessionToken,
+  deleteSession,
+  createUserAccount,
+  updateUserPassword,
+  listUsers,
+  deleteUserAccount,
+  createInvitation,
+  getInvitationByToken,
+  acceptInvitation,
+  listInvitations,
+  deleteInvitation,
   getOrCreateCategory,
   getSidebarData,
   getArticles,
@@ -451,5 +924,7 @@ module.exports = {
   upsertArticlesForFeed,
   markAllRead,
   getSettings,
-  updateSettings
+  updateSettings,
+  getRecentArticlesForBriefing,
+  getAllArticlesForSearch
 };
