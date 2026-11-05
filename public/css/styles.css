@@ -1,6 +1,5 @@
 /* ==========================================================================
    FLUX — DESIGN SYSTEM ÉPURÉ (CLAIR & SOMBRE)
-   Inspiré par Linear, Apple, Notion & mise en page éditoriale type 01net
    ========================================================================== */
 
 :root,
@@ -554,7 +553,7 @@ a {
 }
 
 /* ==========================================================================
-   COLONNE CENTRALE — FIL D'ACTUALITÉS STYLE 01NET ÉPURÉ
+   COLONNE CENTRALE — FIL D'ACTUALITÉS ÉDITORIAL
    ========================================================================== */
 
 .feed-column {
@@ -774,7 +773,7 @@ a {
 }
 
 /* ==========================================================================
-   LISTE D'ARTICLES — VUE ÉDITORIALE (STYLE 01NET ÉPURÉ)
+   LISTE D'ARTICLES — VUE ÉDITORIALE
    ========================================================================== */
 
 .articles-scroll-container {
@@ -813,7 +812,7 @@ a {
   background: var(--border-subtle);
 }
 
-/* Carte d'article en mode Éditorial (Style 01net : petite vignette discrète + texte structuré) */
+/* Carte d'article en mode Éditorial */
 .article-item {
   position: relative;
   display: flex;
@@ -841,7 +840,7 @@ a {
   box-shadow: 0 0 0 1px var(--accent-border);
 }
 
-/* Petite image / vignette discrète (Style 01net) */
+/* Vignette d'article */
 .article-thumb-wrap {
   width: 108px;
   height: 74px;

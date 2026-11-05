@@ -1,7 +1,7 @@
 /**
  * Extracteur Web :
  * 1. Téléchargement HTTP résilient (User-Agent réaliste, timeouts, décodage charset)
- * 2. Auto-découverte de flux RSS/Atom à partir de l'URL d'un site web (ex: https://www.01net.com)
+ * 2. Auto-découverte de flux RSS/Atom à partir de l'URL d'un site web
  * 3. Extraction du mode "Article Complet" (Reader View) + récupération d'image og:image
  */
 
@@ -228,7 +228,7 @@ async function extractFullArticle(articleUrl) {
     candidates.push(match[1]);
   }
 
-  // 2. Conteneurs éditoriaux classiques (01net, WordPress, Le Monde, Frandroid, etc.)
+  // 2. Conteneurs éditoriaux classiques (WordPress, médias numériques, blogs)
   const containerPatterns = [
     /<div\b[^>]*itemprop\s*=\s*["']articleBody["'][^>]*>([\s\S]*?)<\/div>/gi,
     /<div\b[^>]*class\s*=\s*["'][^"']*(?:article-content|article__content|post-content|entry-content|article-body|story-body|content-body|single-content|c-article-content)[^"']*["'][^>]*>([\s\S]*?)<\/div>/gi,

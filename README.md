@@ -1,35 +1,45 @@
-# Flux — Agrégateur RSS Moderne & Épuré
+# Flux — Plateforme de Veille & Agrégateur RSS Intelligent
 
-Alternative moderne, rapide et minimaliste à **FreshRSS**, combinant :
-- Un **fil d'actualités éditorial style 01net** avec petites vignettes discrètes, hiérarchie typographique soignée et regroupement temporel (*Aujourd'hui*, *Hier*, *Cette semaine*).
-- Un **panneau de lecture intégré (« Reader View »)** avec extraction du texte intégral des articles tronqués (**Mode Article Complet**) et lien direct vers le site original.
-- Un **Design System Clair / Sombre** inspiré de Linear, Apple et Notion.
-- Une **migration FreshRSS en 1 clic** grâce à l'import/export **OPML** complet.
-- Un fonctionnement autonome avec base de données **SQLite intégrée** (aucune dépendance externe lourde), exécutable sur **Windows en 1 clic** ou sur **Serveur / NAS via Docker**.
+**Flux** est un agrégateur de flux RSS/Atom et un outil de veille conçu pour offrir une expérience de lecture épurée, rapide et assistée par l'intelligence artificielle :
+
+- **Interface Éditoriale Minimaliste** : Trois dispositions au choix (*Vue Éditoriale*, *Vue Compacte*, *Grille Magazine*), thème **Clair & Sombre** sobre et typographie soignée.
+- **Panneau de Lecture Intégré (« Reader View »)** : Extraction à la demande du texte intégral des articles (**Mode Article Complet**), personnalisation typographique et accès direct à la source.
+- **Synthèse IA du Jour & Recherche Sémantique** :
+  - **Résumé IA du jour** : Briefing exécutif quotidien, détection des sujets majeurs, regroupement thématique et suivi des alertes de cybersécurité (`CVE` / `CERT`).
+  - **Recherche & Veille IA** : Recherche thématique et questions en langage naturel dans l'ensemble de vos flux.
+  - **Moteur IA Hybride** : Moteur sémantique local autonome intégré (sans clé API requise) + compatibilité native avec Google Gemini, OpenAI, Mistral et Ollama.
+- **Accès Privé & Multi-Utilisateurs** : Authentification obligatoire, inscriptions publiques désactivées, création de comptes et génération de **liens d'invitation à usage unique** par l'administrateur.
+- **Standard OPML 2.0** : Importation et exportation complètes de vos dossiers et abonnements en un clic.
+- **Autonome & Léger** : Propulsé par Node.js et SQLite intégré (aucune dépendance externe lourde), prêt pour Windows ou un déploiement serveur / NAS via Docker.
 
 ---
 
-## 🚀 Lancement rapide
+## 🚀 Démarrage rapide
 
-### 1. Sur votre PC Windows
-- Double-cliquez sur **`lancer.bat`** à la racine du projet (cela démarre le serveur et ouvre automatiquement `http://localhost:3000`), ou lancez dans un terminal :
-  ```bash
-  npm start
-  ```
+### 1. En local sous Windows
+Double-cliquez sur **`lancer.bat`** à la racine du projet (démarre le serveur et ouvre automatiquement `http://localhost:3000`), ou exécutez dans un terminal :
+```bash
+npm start
+```
 
 ### 2. Sur un Serveur ou NAS (Docker)
 ```bash
 docker compose up -d --build
 ```
-Vos abonnements, favoris et articles sont stockés de façon persistante dans le dossier `./data/fluxrss.db`.
+Les données (utilisateurs, abonnements, articles) sont conservées de manière persistante dans le volume `./data`.
 
 ---
 
-## 🔄 Migrer vos flux depuis FreshRSS (Import OPML)
+## 🔐 Première connexion & Administration
 
-1. Dans FreshRSS, ouvrez **Gestion des abonnements → Importer / Exporter** et cliquez sur **Exporter en OPML**.
-2. Dans **Flux**, cliquez sur le bouton **OPML** en haut à gauche de la barre latérale.
-3. Sélectionnez votre fichier `.opml` et cliquez sur **Lancer l'importation OPML** : tous vos dossiers et flux sont recréés et synchronisés automatiquement.
+Par défaut, l'accès à l'application est privé :
+- **Identifiant initial** : `admin` *(modifiable via la variable d'environnement `ADMIN_USER`)*
+- **Mot de passe initial** : `admin1234` *(modifiable via `ADMIN_PASSWORD` ou directement depuis l'interface dans **Gestion des comptes → Mon mot de passe**)*
+
+Depuis le panneau **Gestion des comptes & Invitations** (en bas de la barre latérale), l'administrateur peut :
+1. **Générer des liens d'invitation à usage unique** à partager aux nouveaux utilisateurs.
+2. **Créer et gérer les comptes utilisateurs** (chaque utilisateur dispose de ses propres dossiers, flux et favoris isolés).
+3. **Configurer le fournisseur IA** (Moteur local intégré, Gemini, OpenAI, Mistral ou Ollama).
 
 ---
 

@@ -1417,7 +1417,6 @@ function bindEvents() {
     const username = document.getElementById('invite-username').value.trim();
     const displayName = document.getElementById('invite-display-name').value.trim();
     const password = document.getElementById('invite-password').value;
-    const seedFeeds = document.getElementById('invite-seed-feeds').checked;
     const errBox = document.getElementById('invite-error');
     const btn = document.getElementById('btn-invite-submit');
 
@@ -1433,7 +1432,7 @@ function bindEvents() {
           username,
           displayName,
           password,
-          seedFeeds
+          seedFeeds: false
         })
       });
       state.user = res.user;
@@ -1530,14 +1529,13 @@ function bindEvents() {
     const displayName = document.getElementById('new-user-display').value.trim();
     const password = document.getElementById('new-user-password').value;
     const role = document.getElementById('new-user-role').value;
-    const seedFeeds = document.getElementById('new-user-seed').checked;
     const errBox = document.getElementById('create-user-error');
 
     errBox.classList.add('hidden');
     try {
       const res = await apiFetch('/api/admin/users', {
         method: 'POST',
-        body: JSON.stringify({ username, displayName, password, role, seedFeeds })
+        body: JSON.stringify({ username, displayName, password, role, seedFeeds: false })
       });
       document.getElementById('new-user-username').value = '';
       document.getElementById('new-user-display').value = '';

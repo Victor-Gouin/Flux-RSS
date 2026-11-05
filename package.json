@@ -1,12 +1,11 @@
 {
   "name": "flux-rss",
   "version": "1.0.0",
-  "description": "Agrégateur de flux RSS moderne, épuré et rapide — alternative élégante à FreshRSS",
+  "description": "Plateforme de veille et agrégateur de flux RSS moderne avec synthèse et recherche sémantique par IA",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node --watch server/index.js",
-    "test": "node --test test/*.test.js"
+    "dev": "node --watch server/index.js"
   },
   "engines": {
     "node": ">=22.5.0"
@@ -15,9 +14,10 @@
     "rss",
     "atom",
     "opml",
-    "freshrss",
     "reader",
-    "aggregator"
+    "aggregator",
+    "ai",
+    "veille"
   ],
   "license": "MIT"
 }

@@ -874,33 +874,6 @@ function getAllArticlesForSearch(userId, limit = 500) {
     .all(Number(userId), Number(limit));
 }
 
-// S'assurer que le flux CERT-FR (CVE) est bien présent chez l'admin s'il utilise les flux par défaut
-try {
-  const admin = db.prepare(`SELECT id FROM users ORDER BY id ASC LIMIT 1`).get();
-  if (admin) {
-    const hasCert = db
-      .prepare(`SELECT id FROM feeds WHERE user_id = ? AND xml_url LIKE '%cert.ssi.gouv.fr%'`)
-      .get(admin.id);
-    if (!hasCert) {
-      const cat = getOrCreateCategory(admin.id, 'Cybersécurité & CVE');
-      db.prepare(`
-        INSERT OR IGNORE INTO feeds (user_id, category_id, title, xml_url, site_url, description, favicon_url)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        admin.id,
-        cat.id,
-        'CERT-FR (ANSSI — Alertes & Avis CVE)',
-        'https://www.cert.ssi.gouv.fr/feed/',
-        'https://www.cert.ssi.gouv.fr',
-        'Avis de sécurité officiels, vulnérabilités CVE et alertes du CERT-FR (ANSSI)',
-        getFaviconUrl('https://www.cert.ssi.gouv.fr')
-      );
-    }
-  }
-} catch {
-  // ignore
-}
-
 module.exports = {
   db,
   DB_PATH,

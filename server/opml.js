@@ -1,6 +1,5 @@
 /**
  * Gestionnaire d'import et d'export OPML (1.0 & 2.0)
- * 100% compatible avec l'export OPML de FreshRSS, Feedly, Inoreader, NetNewsWire, Reeder.
  */
 
 const { decodeEntities } = require('./rssParser');
