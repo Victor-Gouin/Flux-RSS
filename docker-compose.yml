@@ -1,6 +1,6 @@
 services:
   flux-rss:
-    build: https://github.com/Victor-Gouin/Flux-RSS.git#main
+    image: ghcr.io/victor-gouin/flux-rss:latest
     container_name: flux-rss
     restart: unless-stopped
     ports:
