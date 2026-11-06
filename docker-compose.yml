@@ -1,13 +1,12 @@
 services:
   flux-rss:
-    image: ghcr.io/victor-gouin/flux-rss:latest
+    build: https://github.com/Victor-Gouin/Flux-RSS.git#main
     container_name: flux-rss
     restart: unless-stopped
     ports:
       - "3000:3000"
     volumes:
-      # En local : ./data:/app/data
-      # Sur Unraid : /mnt/user/appdata/flux-rss:/app/data
+      # Sur Unraid, remplacez ./data par /mnt/user/appdata/flux-rss
       - ./data:/app/data
     environment:
       - NODE_ENV=production
