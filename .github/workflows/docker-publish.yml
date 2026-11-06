@@ -1,4 +1,4 @@
-name: Publish Docker Image
+name: Publish Docker Image (GHCR)
 
 on:
   push:
@@ -6,39 +6,41 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
-  push_to_registry:
-    name: Build & Push to Docker Hub
+  push_to_ghcr:
+    name: Build & Push to GitHub Container Registry
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Normalize Docker Hub image name
+      - name: Prepare lowercase repository name
         id: meta
-        env:
-          DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
-          if [ -z "$DOCKER_USER" ]; then
-            echo "::error::Le secret DOCKERHUB_USERNAME n'est pas configuré dans Settings -> Secrets and variables -> Actions."
-            exit 1
-          fi
-          USER_LOWER=$(echo "$DOCKER_USER" | tr '[:upper:]' '[:lower:]')
-          echo "image=${USER_LOWER}/flux-rss" >> "$GITHUB_OUTPUT"
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/${REPO_LOWER}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
+      - name: Log in to GitHub Container Registry (ghcr.io)
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image to GHCR
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
             ${{ steps.meta.outputs.image }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=Flux - Plateforme de veille et agrégateur RSS avec IA
