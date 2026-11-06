@@ -1,12 +1,18 @@
 services:
   flux-rss:
+    # Pour Unraid / Docker Hub, remplacez <votre-pseudo-dockerhub> par votre identifiant Docker Hub :
+    # image: <votre-pseudo-dockerhub>/flux-rss:latest
     build: .
     container_name: flux-rss
     restart: unless-stopped
     ports:
       - "3000:3000"
     volumes:
+      # Sur Unraid, utilisez : /mnt/user/appdata/flux-rss:/app/data
       - ./data:/app/data
     environment:
+      - NODE_ENV=production
       - PORT=3000
       - DATA_DIR=/app/data
+      - ADMIN_USER=admin
+      - ADMIN_PASSWORD=admin1234

@@ -1,0 +1,8 @@
+.git
+.github
+node_modules
+data
+test
+*.log
+.DS_Store
+Thumbs.db
