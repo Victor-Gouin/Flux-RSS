@@ -1845,6 +1845,16 @@ function bindEvents() {
   document.getElementById('btn-mobile-sidebar').addEventListener('click', () => {
     els.sidebar.classList.toggle('open');
   });
+  // Fermeture du menu latéral mobile en touchant l'arrière-plan
+  document.getElementById('sidebar-backdrop').addEventListener('click', () => {
+    els.sidebar.classList.remove('open');
+  });
+  // Logo de la barre de navigation : retour à « Toute l'actualité »
+  document.getElementById('btn-topbar-home').addEventListener('click', () => {
+    const homeBtn = document.querySelector('.sidebar-nav .nav-item[data-filter="all"]');
+    if (homeBtn) homeBtn.click();
+    els.articlesScroll?.scrollTo({ top: 0, behavior: 'smooth' });
+  });
 
   document.querySelectorAll('.modal-close').forEach((btn) => {
     btn.addEventListener('click', () => closeModal(btn.dataset.close));
@@ -1973,6 +1983,10 @@ function bindEvents() {
       const openModalEl = document.querySelector('.modal-backdrop:not(.hidden)');
       if (openModalEl) {
         openModalEl.classList.add('hidden');
+        return;
+      }
+      if (els.sidebar.classList.contains('open')) {
+        els.sidebar.classList.remove('open');
         return;
       }
       if (!els.readerPane.classList.contains('hidden')) {

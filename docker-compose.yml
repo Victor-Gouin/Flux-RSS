@@ -1,12 +1,16 @@
 services:
   flux-rss:
-    build: .
+    image: ghcr.io/victor-gouin/flux-rss:latest
     container_name: flux-rss
     restart: unless-stopped
     ports:
       - "3000:3000"
     volumes:
+      # Sur Unraid, remplacez ./data par /mnt/user/appdata/flux-rss
       - ./data:/app/data
     environment:
+      - NODE_ENV=production
       - PORT=3000
       - DATA_DIR=/app/data
+      - ADMIN_USER=admin
+      - ADMIN_PASSWORD=admin1234
